@@ -1,0 +1,6 @@
+[connection]
+address = "127.0.0.1:2771"
+config = "CompatPOSIXShell"
+
+[instance_options]
+touch_mode = "ADB"

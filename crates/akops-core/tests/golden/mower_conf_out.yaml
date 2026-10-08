@@ -1,0 +1,20 @@
+account: ops@example.com
+mail:
+  enable: false
+skland_info:
+- account: '13800000000'
+  password: fake-password-only-for-tests
+plan_times:
+  23:50:
+  - Recreation
+  - 0
+  04:30:
+  - Meditate
+  - 0
+device:
+  sobel: {}
+webview:
+  port: 58100
+  token: session-token-abc
+adb: arknights:5555
+start_automatically: true

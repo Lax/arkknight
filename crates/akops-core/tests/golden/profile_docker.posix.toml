@@ -1,0 +1,6 @@
+[connection]
+address = "arknights:5555"
+config = "CompatPOSIXShell"
+
+[instance_options]
+touch_mode = "ADB"

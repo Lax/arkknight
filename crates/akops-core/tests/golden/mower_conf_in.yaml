@@ -1,0 +1,18 @@
+# mower conf.yml 样例（金测试夹具；字段仅为覆盖典型结构）
+# 注：顶层 account 是 SMTP 邮箱用户名，不是游戏账号（AGENTS.md 常见坑）
+account: ops@example.com
+mail:
+  enable: false
+skland_info:
+  - account: '13800000000'
+    password: 'fake-password-only-for-tests'
+plan_times: &pt
+  '23:50': [Recreation, 0]
+  '04:30': [Meditate, 0]
+device:
+  sobel: {}
+webview:
+  port: 59000
+  token: old-webview-token
+adb: 127.0.0.1:9999
+start_automatically: false

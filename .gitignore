@@ -1,0 +1,21 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / UI
+node_modules/
+ui/dist/
+
+# 用户工作目录运行数据（仓库本身不是 workdir）
+state/
+logs/
+export/
+*.db
+*.db-wal
+*.db-shm
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store
