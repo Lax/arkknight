@@ -1,6 +1,14 @@
 // arkreunion API 客户端：token 存 localStorage（控制台设置区可改），经 Bearer 头发送
 export function getToken(): string {
-  return localStorage.getItem('arkreunion-token') ?? ''
+  const stored = localStorage.getItem('arkreunion-token') ?? ''
+  if (stored) return stored
+  // 首次用 http://host:port/?token=xxx 打开时，URL 参数落到 localStorage 供后续请求用
+  const fromUrl = new URLSearchParams(location.search).get('token') ?? ''
+  if (fromUrl) {
+    localStorage.setItem('arkreunion-token', fromUrl)
+    return fromUrl
+  }
+  return ''
 }
 
 export function setToken(t: string): void {
@@ -18,18 +26,33 @@ async function req(method: string, path: string, body?: unknown): Promise<unknow
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new Error(data.error ?? `HTTP ${res.status}`)
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string
+      hint?: string
+      config_path?: string
+    }
+    // 401 单独标记：控制台据此在侧栏提示「token 不对」，而非每个页面各弹一次
+    if (res.status === 401) {
+      localStorage.setItem('arkreunion-auth-failed', '1')
+    }
+    // 服务端错误带 hint 时一并抛出：hint 说明「去哪里改」，比裸 error 更可操作
+    const parts = [data.error ?? `HTTP ${res.status}`]
+    if (data.hint) parts.push(data.hint)
+    throw new Error(parts.join('\n'))
   }
   const ct = res.headers.get('content-type') ?? ''
   return ct.includes('json') ? res.json() : res.text()
 }
 
 export interface AccountInfo {
-  id: string
+  /** 本地定位键（= 目录名 accounts/<key>/），非游戏身份 */
+  key: string
   display_name: string
   server: string
+  /** MAA 切号匹配串：官服=打码手机号片段，B服=昵称 */
   account_name: string
+  /** 游戏 UID（纯数字）：切号后 OCR 核验防串数据；null = 未配置，跳过核验 */
+  uid: string | null
   enabled: boolean
   priority: number
   slice: string | null
@@ -39,7 +62,7 @@ export interface AccountInfo {
 
 export interface SessionInfo {
   id: number
-  account_id: string
+  account_key: string
   device_name: string
   executor: string
   state: string
@@ -76,11 +99,34 @@ export const api = {
     req('POST', '/api/sessions', { account, executor, slice, task }),
   drain: (id: number) => req('POST', `/api/sessions/${id}/drain`),
   accounts: () => req('GET', '/api/accounts') as Promise<AccountInfo[]>,
-  createAccount: (body: unknown) => req('POST', '/api/accounts', body),
-  patchAccount: (id: string, body: unknown) => req('PATCH', `/api/accounts/${id}`, body),
-  deleteAccount: (id: string) => req('DELETE', `/api/accounts/${id}?confirm=1`),
+  createAccount: (body: {
+    key: string
+    display_name?: string | null
+    server: string
+    account_name: string
+    uid?: string | null
+    priority?: number
+    windows?: unknown[]
+  }) => req('POST', '/api/accounts', body),
+  patchAccount: (
+    key: string,
+    body: {
+      enabled?: boolean
+      priority?: number
+      account_name?: string
+      display_name?: string
+      uid?: string
+    },
+  ) => req('PATCH', `/api/accounts/${key}`, body),
+  deleteAccount: (key: string) => req('DELETE', `/api/accounts/${key}?confirm=1`),
   devices: () => req('GET', '/api/devices') as Promise<DeviceInfo[]>,
   testDevice: (name: string) => req('POST', `/api/devices/${name}/test`),
+  /** 设备截图 URL：作为 <img src> 消费，故不经 fetch（带 token 的查询串）。
+      cacheBuster 用于手动刷新，绕开 no-store 之外的浏览器缓存。 */
+  screenshotUrl: (name: string, nonce = 0) =>
+    `/api/devices/${encodeURIComponent(name)}/screenshot`
+      + `?token=${encodeURIComponent(getToken())}`
+      + (nonce ? `&t=${nonce}` : ''),
   doctor: () => req('GET', '/api/doctor'),
   pause: () => req('POST', '/api/schedule/pause'),
   resume: () => req('POST', '/api/schedule/resume'),

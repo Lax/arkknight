@@ -26,6 +26,10 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[dev-dependencies]
+# Router 单测用 oneshot 驱动（仅测试期依赖，不进发布二进制）
+tower = { version = "0.5", features = ["util"] }
+
 [lints]
 workspace = true
 

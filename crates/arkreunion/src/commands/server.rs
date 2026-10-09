@@ -202,6 +202,10 @@ fn router(state: AppState) -> Router {
             "/api/devices/{name}/test",
             axum::routing::post(api_device_test),
         )
+        .route(
+            "/api/devices/{name}/screenshot",
+            axum::routing::get(api_device_screenshot),
+        )
         .route("/api/doctor", axum::routing::get(api_doctor))
         .route("/api/ws", axum::routing::get(api_ws))
         .fallback(ui_fallback)
@@ -210,12 +214,16 @@ fn router(state: AppState) -> Router {
 }
 
 /// 鉴权中间件：token 为空直接放行（默认仅 loopback）；否则校验 Bearer / ?token=。
+///
+/// 仅作用于 `/api/*`：控制台的 `<script src>`/`fetch` 不会自动带 `?token=`，
+/// 若连静态资源一并拦截则控制台永远白屏（首页 200、assets 401）。
+/// 静态资源本身不含敏感数据，且控制台仅在 loopback/受控网络暴露。
 async fn auth_mw(
     State(s): State<AppState>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> impl IntoResponse {
-    if s.token.is_empty() {
+    if s.token.is_empty() || !req.uri().path().starts_with("/api/") {
         return next.run(req).await;
     }
     let supplied = req
@@ -234,12 +242,56 @@ async fn auth_mw(
     if supplied.as_deref() == Some(s.token.as_str()) {
         next.run(req).await
     } else {
+        let detail = if supplied.is_some() {
+            "token 已提供但与 server.token 不一致"
+        } else {
+            "请求未携带 token"
+        };
         (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "token 无效或缺失"})),
+            Json(json!({
+                "error": "token 无效或缺失",
+                "detail": detail,
+                "hint": format!(
+                    "token 来自工作目录配置 {}[server].token。修改后需重启 daemon；\
+                     控制台侧可在左侧「API token」框填写，或用 ?token=<值> 访问 \
+                     http://{addr}/?token=<值>（前端会存入 localStorage）。",
+                    s.wd.config_path().display(),
+                    addr = cfg_addr_hint(&s.wd),
+                ),
+                "config_path": s.wd.config_path().display().to_string(),
+            })),
         )
             .into_response()
     }
+}
+
+/// 列表为空时给出「（无）」，避免 hint 出现空字符串。
+fn list_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        "（无）".to_string()
+    } else {
+        items.join("、")
+    }
+}
+
+/// 报错里的控制台地址提示（读配置端口，失败则省略）。
+fn cfg_addr_hint(wd: &Workdir) -> String {
+    match wd.load_config() {
+        Ok(cfg) => format!("127.0.0.1:{}", cfg.server.port),
+        Err(_) => "127.0.0.1:7100".to_string(),
+    }
+}
+
+/// 统一的「可操作」错误响应：`error` 面向人，`hint` 给出下一步命令/文件位置。
+///
+/// 控制台把 `hint` 直接展示，避免用户只看到干巴巴的「不存在」而无从下手。
+fn actionable(err: impl std::fmt::Display, hint: impl Into<String>) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": err.to_string(), "hint": hint.into()})),
+    )
+        .into_response()
 }
 
 async fn api_status(State(s): State<AppState>) -> impl IntoResponse {
@@ -249,7 +301,7 @@ async fn api_status(State(s): State<AppState>) -> impl IntoResponse {
             .iter()
             .map(|a| {
                 json!({
-                    "id": a.id, "display_name": a.display_name, "server": a.server.to_string(),
+                    "key": a.key, "display_name": a.display_name, "server": a.server.to_string(),
                     "enabled": a.enabled, "priority": a.schedule.priority,
                     "windows": a.schedule.windows.iter().map(|w| json!({
                         "start": w.start, "end": w.end,
@@ -314,7 +366,7 @@ async fn api_sessions(
     Json(json!(
         rows.iter()
             .map(|r| json!({
-                "id": r.id, "account_id": r.account_id, "device_name": r.device_name,
+                "id": r.id, "account_key": r.account_key, "device_name": r.device_name,
                 "executor": r.executor, "state": r.state, "mower_port": r.mower_port,
                 "started_at_ms": r.started_at_ms, "ended_at_ms": r.ended_at_ms,
                 "outcome": r.outcome, "error": r.error,
@@ -409,7 +461,7 @@ async fn api_accounts(State(s): State<AppState>) -> impl IntoResponse {
 
 fn account_json(a: &arkreunion_core::model::Account) -> serde_json::Value {
     json!({
-        "id": a.id, "display_name": a.display_name, "server": a.server.to_string(),
+        "key": a.key, "display_name": a.display_name, "server": a.server.to_string(),
         "account_name": a.account_name, "enabled": a.enabled, "uid": a.uid,
         "priority": a.schedule.priority,
         "slice": a.schedule.slice.as_ref().map(|d| d.to_string()),
@@ -427,11 +479,15 @@ fn account_json(a: &arkreunion_core::model::Account) -> serde_json::Value {
 
 #[derive(serde::Deserialize)]
 struct AccountCreateBody {
-    id: String,
+    /// 账号 key（本地定位键 = 目录名）
+    key: String,
     #[serde(default)]
     display_name: Option<String>,
     server: String,
     account_name: String,
+    /// 游戏 UID（纯数字）：配置后切号成功即 OCR 核验身份，防登错号串数据（§9.4）
+    #[serde(default)]
+    uid: Option<String>,
     #[serde(default)]
     priority: Option<u8>,
     #[serde(default)]
@@ -469,11 +525,25 @@ async fn api_account_create(
 ) -> impl IntoResponse {
     match account_create_inner(&s.wd, body) {
         Ok(a) => (StatusCode::CREATED, Json(account_json(&a))).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            // 校验失败按错误类型给不同引导：uid 格式 / account_name 重复 / id 非法
+            let hint = if msg.contains("uid") {
+                "uid 须为纯数字游戏 UID（游戏内「个人名片」页可见）；留空则切号后跳过身份核验，doctor 会告警串数据风险".to_string()
+            } else if msg.contains("account_name") {
+                "切号匹配串须在该设备已登录账号中唯一：官服用打码手机号片段（如 123****8901），B服用昵称；最终以 MAA 运行结果为准".to_string()
+            } else if msg.contains("id") {
+                "id 决定目录 accounts/<id>：须小写字母/数字开头，仅含小写字母、数字、-、_"
+                    .to_string()
+            } else {
+                "检查账号配置字段；`arkreunion doctor` 可体检".to_string()
+            };
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": msg, "hint": hint})),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -488,11 +558,11 @@ fn account_create_inner(
         .map(WindowBody::into_model)
         .collect::<anyhow::Result<Vec<_>>>()?;
     let acc = arkreunion_core::model::Account {
-        id: body.id.clone(),
-        display_name: body.display_name.unwrap_or_else(|| body.id.clone()),
+        key: body.key.clone(),
+        display_name: body.display_name.unwrap_or_else(|| body.key.clone()),
         server,
         account_name: body.account_name,
-        uid: None,
+        uid: body.uid,
         enabled: true,
         schedule: arkreunion_core::model::AccountSchedule {
             windows,
@@ -502,16 +572,16 @@ fn account_create_inner(
         provisioned_on: vec![],
     };
     acc.validate().map_err(anyhow::Error::from)?;
-    if wd.account_file(&acc.id).exists() {
-        bail!("账号 {} 已存在", acc.id);
+    if wd.account_file(&acc.key).exists() {
+        bail!("账号 {} 已存在", acc.key);
     }
     wd.save_account(&acc).map_err(anyhow::Error::from)?;
     let dups = wd.account_name_duplicates().map_err(anyhow::Error::from)?;
-    if let Some((name, ids)) = dups.iter().find(|(_, ids)| ids.contains(&acc.id)) {
-        let _ = wd.remove_account(&acc.id);
+    if let Some((name, keys)) = dups.iter().find(|(_, keys)| keys.contains(&acc.key)) {
+        let _ = wd.remove_account(&acc.key);
         bail!(
             "account_name {name:?} 已被 {} 使用（切号匹配串须唯一）",
-            ids.join(",")
+            keys.join(",")
         );
     }
     Ok(acc)
@@ -533,13 +603,23 @@ struct AccountPatchBody {
 
 async fn api_account_patch(
     State(s): State<AppState>,
-    Path(id): Path<String>,
+    Path(key): Path<String>,
     Json(body): Json<AccountPatchBody>,
 ) -> impl IntoResponse {
-    let mut acc = match s.wd.load_account(&id) {
+    let mut acc = match s.wd.load_account(&key) {
         Ok(a) => a,
         Err(e) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": e.to_string(),
+                    "hint": format!(
+                        "账号不存在。已注册：{}；新增用 `arkreunion account add <key> --server official --account-name '<匹配串>'`（MAA 切号匹配串须唯一）",
+                        list_or_none(&s.wd.account_keys())
+                    ),
+                })),
+            )
+                .into_response();
         }
     };
     if let Some(v) = body.enabled {
@@ -576,7 +656,7 @@ async fn api_account_patch(
 
 async fn api_account_delete(
     State(s): State<AppState>,
-    Path(id): Path<String>,
+    Path(key): Path<String>,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     if q.get("confirm").map(|v| v.as_str()) != Some("1") {
@@ -586,9 +666,19 @@ async fn api_account_delete(
         )
             .into_response();
     }
-    match s.wd.remove_account(&id) {
-        Ok(()) => Json(json!({"deleted": id})).into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response(),
+    match s.wd.remove_account(&key) {
+        Ok(()) => Json(json!({"deleted": key})).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": e.to_string(),
+                "hint": format!(
+                    "账号不存在。已注册：{}",
+                    list_or_none(&s.wd.account_keys())
+                ),
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -625,17 +715,29 @@ async fn api_device_test(State(s): State<AppState>, Path(name): Path<String>) ->
     let dev = match s.wd.load_device(&name) {
         Ok(d) => d,
         Err(e) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": e.to_string(),
+                    "hint": format!(
+                        "设备不存在。已注册：{}；新增用 `arkreunion device add <name> --host-adb <宿主adb地址> [--docker-adb <容器网络地址>]`",
+                        list_or_none(&s.wd.device_names())
+                    ),
+                })),
+            )
+                .into_response();
         }
     };
     let backend = match build_backend(&dev, &cfg.paths.adb_path_expanded()) {
         Ok(b) => b,
         Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return actionable(
+                e,
+                format!(
+                    "设备后端不可用。检查 {}[paths].adb_path 指向的 adb 是否可用（容器内用 `arkreunion doctor` 体检）",
+                    s.wd.config_path().display()
+                ),
+            );
         }
     };
     #[allow(unused_imports)]
@@ -653,6 +755,62 @@ async fn api_device_test(State(s): State<AppState>, Path(name): Path<String>) ->
         "game_packages": packages,
     }))
     .into_response()
+}
+
+/// 设备截屏（PNG）。前端以 `<img src=...>` 消费，故直接回二进制并带 no-store。
+async fn api_device_screenshot(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let cfg = match s.wd.load_config() {
+        Ok(c) => c,
+        Err(e) => return actionable(e, "读取工作目录配置失败，跑 `arkreunion doctor`"),
+    };
+    let dev = match s.wd.load_device(&name) {
+        Ok(d) => d,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": e.to_string(),
+                    "hint": format!(
+                        "设备不存在。已注册：{}",
+                        list_or_none(&s.wd.device_names())
+                    ),
+                })),
+            )
+                .into_response();
+        }
+    };
+    let backend = match build_backend(&dev, &cfg.paths.adb_path_expanded()) {
+        Ok(b) => b,
+        Err(e) => return actionable(e, "设备后端不可用，跑 `arkreunion doctor`"),
+    };
+    match backend.screenshot().await {
+        Ok(png) => (
+            StatusCode::OK,
+            [
+                (
+                    axum::http::header::CONTENT_TYPE,
+                    "image/png".to_string(),
+                ),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "no-store".to_string(),
+                ),
+            ],
+            png,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": e.to_string(),
+                "hint": "截屏失败多为设备离线/息屏：先 `arkreunion device test <name>`，再确认游戏或桌面已点亮屏幕",
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn api_doctor(State(s): State<AppState>) -> impl IntoResponse {
@@ -682,16 +840,26 @@ async fn api_session_start(
     Json(body): Json<SessionStartBody>,
 ) -> impl IntoResponse {
     // 引擎活跃会话进行中则拒绝（M1 单设备串行；不抢占）
-    if s.handle
+    let active_id = s
+        .handle
         .active
         .0
         .lock()
         .expect("active 锁 poisoned")
-        .is_some()
-    {
+        .as_ref()
+        .map(|a| a.session_id);
+    if let Some(active_id) = active_id {
         return (
             StatusCode::CONFLICT,
-            Json(json!({"error": "当前有会话运行中（调度器/手动）；请先 drain"})),
+            Json(json!({
+                "error": "当前有会话运行中（调度器/手动）；请先 drain",
+                "hint": format!(
+                    "在控制台「会话」页点 drain，或 `arkreunion session drain {}`。\
+                     若确认无会话却报此错，多为 daemon 重启前的会话残留：\
+                     `arkreunion status` 查看，必要时重启 daemon（启动时会自动清理残留租约）",
+                    active_id
+                ),
+            })),
         )
             .into_response();
     }
@@ -709,7 +877,17 @@ async fn api_session_start(
     let account = match s.wd.load_account(&body.account) {
         Ok(a) => a,
         Err(e) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": e.to_string(),
+                    "hint": format!(
+                        "账号不存在。已注册：{}",
+                        list_or_none(&s.wd.account_keys())
+                    ),
+                })),
+            )
+                .into_response();
         }
     };
     let slice = match body.slice.as_deref() {
@@ -942,5 +1120,194 @@ async fn ui_fallback(uri: axum::http::Uri) -> impl IntoResponse {
                 (StatusCode::NOT_FOUND, "not found").into_response()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arkreunion_core::model::{Device, DeviceBackendKind, DeviceConnection};
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
+    use tower::util::ServiceExt;
+
+    fn state_with_token(token: &str) -> AppState {
+        let store = Arc::new(Store::open_in_memory().expect("打开内存库"));
+        let (_, handle) = EngineHandle::new();
+        let factory: ExecutorFactory = Arc::new(|_| Err("测试不需要真实执行器".to_string()));
+        AppState {
+            wd: Workdir::new(std::env::temp_dir().join("arkreunion-auth-test")),
+            shared: Arc::new(EngineShared {
+                wd: Workdir::new(std::env::temp_dir().join("arkreunion-auth-test")),
+                cfg: AkopsConfig::default(),
+                store: store.clone(),
+                device: Device {
+                    name: "d1".into(),
+                    backend: DeviceBackendKind::External,
+                    connection: DeviceConnection {
+                        host_adb: "127.0.0.1:5555".into(),
+                        docker_adb: None,
+                        docker_network: None,
+                    },
+                    notes: String::new(),
+                },
+                factory,
+                switch_timeout: Duration::from_secs(1),
+                maa_bin: "maa".into(),
+                backoff_override: None,
+            }),
+            store,
+            handle,
+            token: token.to_string(),
+        }
+    }
+
+    /// token 非空时，静态资源（控制台 JS/CSS）不得被鉴权拦截——
+    /// 浏览器不会给 `<script src>` 带 `?token=`，拦截会导致控制台永久白屏。
+    #[tokio::test]
+    async fn 静态资源不经鉴权_控制台可加载() {
+        let app = router(state_with_token("secret"));
+        let res = app
+            .oneshot(
+                HttpRequest::get("/assets/index.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            res.status(),
+            StatusCode::UNAUTHORIZED,
+            "assets 不得被鉴权拦截"
+        );
+    }
+
+    /// 401 报错须可操作：带 hint（去哪儿改 token）与 config_path（哪个文件）。
+    #[tokio::test]
+    async fn 鉴权失败报错带hint与配置路径() {
+        let app = router(state_with_token("secret"));
+        let res = app
+            .oneshot(HttpRequest::get("/api/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let hint = v["hint"].as_str().unwrap_or_default();
+        assert!(hint.contains("[server].token"), "hint 应指向配置项：{hint}");
+        assert!(
+            v["config_path"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with("arkreunion.toml"),
+            "应给出配置文件路径"
+        );
+        assert_eq!(v["detail"].as_str(), Some("请求未携带 token"));
+    }
+
+    /// 创建账号：uid 应能随请求写入（否则控制台无法录入核验依据）。
+    #[tokio::test]
+    async fn 创建账号可带uid() {
+        let tmp = std::env::temp_dir().join(format!("arkreunion-acct-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let wd = Workdir::init(&tmp, &AkopsConfig::default()).unwrap();
+        let acc = account_create_inner(
+            &wd,
+            AccountCreateBody {
+                key: "main".into(),
+                display_name: None,
+                server: "official".into(),
+                account_name: "123****8901".into(),
+                uid: Some("1000123456".into()),
+                priority: None,
+                windows: vec![],
+            },
+        )
+        .expect("创建应成功");
+        assert_eq!(acc.uid.as_deref(), Some("1000123456"));
+        assert_eq!(acc.display_name, "main", "展示名缺省应回落为 key");
+
+        // 非数字 uid 应被 validate 拒绝，并给出可操作提示
+        let bad = account_create_inner(
+            &wd,
+            AccountCreateBody {
+                key: "bad".into(),
+                display_name: None,
+                server: "official".into(),
+                account_name: "x".into(),
+                uid: Some("12ab".into()),
+                priority: None,
+                windows: vec![],
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("uid"), "非数字 uid 应报错：{bad}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 不存在的账号/设备：报错应列出当前已注册项，便于用户自查拼写。
+    #[tokio::test]
+    async fn 不存在实体的报错列出已注册项() {
+        let app = router(state_with_token(""));
+        // PATCH 而非 GET：GET /api/accounts/{id} 未定义，会落到 SPA 回退返回 405
+        let res = app
+            .oneshot(
+                HttpRequest::patch("/api/accounts/nope")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let hint = v["hint"].as_str().unwrap_or_default();
+        assert!(hint.contains("account add"), "hint 应给出新增命令：{hint}");
+        assert!(hint.contains("（无）"), "空列表应显式说明：{hint}");
+    }
+
+    /// 反面：API 仍必须校验 token。
+    #[tokio::test]
+    async fn api_无token被拒_带token放行() {
+        let app = router(state_with_token("secret"));
+        let res = app
+            .clone()
+            .oneshot(HttpRequest::get("/api/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        let res = app
+            .clone()
+            .oneshot(
+                HttpRequest::get("/api/status?token=secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(res.status(), StatusCode::UNAUTHORIZED);
+
+        let res = app
+            .oneshot(
+                HttpRequest::get("/api/status")
+                    .header("authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(res.status(), StatusCode::UNAUTHORIZED);
     }
 }
