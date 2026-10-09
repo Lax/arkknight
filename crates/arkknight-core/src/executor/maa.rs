@@ -185,7 +185,16 @@ mod tests {
         let ex = MaaCliExecutor::new(fake_maa(tmp.path()));
         let handle = ex.start(&ctx(tmp.path(), Some("startup"))).await.unwrap();
         assert!(handle.locator.starts_with("pid="));
-        assert_eq!(ex.health(&handle).await, ExecutorHealth::Alive);
+        // 高并行负载下子进程 fork 可能延迟一拍，重试一小段时间再断言存活
+        let mut alive = ExecutorHealth::Dead;
+        for _ in 0..10 {
+            alive = ex.health(&handle).await;
+            if alive == ExecutorHealth::Alive {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(alive, ExecutorHealth::Alive);
 
         // grace 1s 内不会自然结束 → 强杀路径
         ex.drain(&handle, Duration::from_secs(1)).await.unwrap();

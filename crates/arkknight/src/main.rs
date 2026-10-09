@@ -117,7 +117,7 @@ enum Cmd {
     /// mower 更新（pin commit，含回滚）【M1 任务 6】
     Mower {
         #[command(subcommand)]
-        cmd: commands::todo_placeholder::MowerCmd,
+        cmd: commands::mower::MowerCmd,
     },
     /// 导出工作目录为 zip（可脱敏）【M1 任务 9】
     Export {
@@ -215,7 +215,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Session { cmd } => commands::session::run(wd()?, cmd).await,
         Schedule { cmd } => commands::schedule::run(wd()?, cmd).await,
         Maa { cmd } => commands::maa::run(wd()?, cmd).await,
-        Mower { cmd } => todo::mower(cmd),
+        Mower { cmd } => commands::mower::run(wd()?, cmd).await,
         Export { .. } => todo::export(),
         Import { .. } => todo::import(),
         Migrate => todo::migrate(),

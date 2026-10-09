@@ -114,6 +114,7 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
             .mower_dir
             .clone()
             .or_else(|| Some(cfg.paths.mower_dir.clone())),
+        docker_host: cfg.paths.docker_host_option().map(str::to_string),
     })
     .await;
 
@@ -192,28 +193,37 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
         ),
     });
 
-    // docker + mower 镜像
+    // docker + mower 镜像（bollard 直连，见 detect_docker）
     checks.push(match &det.docker {
         Some(d) => {
             let image = &cfg.paths.docker_mower_image;
-            match image_exists(image).await {
-                Ok(true) => Check::ok("docker", format!("daemon {}，镜像 {image} 就绪", d.version)),
+            match image_exists(&cfg.paths.docker_host_option().map(str::to_string), image).await {
+                Ok(true) => Check::ok(
+                    "docker",
+                    format!(
+                        "daemon {}（endpoint {}），镜像 {image} 就绪",
+                        d.version, d.endpoint
+                    ),
+                ),
                 Ok(false) => Check::warn(
                     "docker",
                     format!("daemon {}，但镜像 {image} 不存在", d.version),
-                    "构建 mower 镜像（DockerRunner 需要）或改用 ProcessRunner",
+                    "构建 mower 镜像（DockerRunner 需要）或改用 ProcessRunner；见 docs/dev/docker-runner.md",
                 ),
                 Err(e) => Check::warn(
                     "docker",
                     format!("查询镜像失败：{e}"),
-                    "检查 docker CLI 权限",
+                    "检查 socket 权限或 paths.docker_host 配置",
                 ),
             }
         }
         None => Check::warn(
             "docker",
-            "Docker daemon 不可达",
-            "DockerRunner 需要 Docker；Windows 原生跑 mower 用 ProcessRunner 即可",
+            format!(
+                "Docker daemon 不可达（endpoint {}）",
+                cfg.paths.docker_host_option().unwrap_or("local defaults")
+            ),
+            "DockerRunner 需要 Docker：本机装 Docker 或配 paths.docker_host 指向 socket-proxy（docs/dev/docker-runner.md）；仅 ProcessRunner 可忽略",
         ),
     });
 
@@ -404,16 +414,15 @@ fn check_port_range(id: &'static str, range: [u16; 2], what: &str) -> Check {
     }
 }
 
-async fn image_exists(image: &str) -> Result<bool, String> {
-    let out = tokio::process::Command::new("docker")
-        .args(["images", "-q", image])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+async fn image_exists(host: &Option<String>, image: &str) -> Result<bool, String> {
+    let docker = crate::executor::connect_docker(host.as_deref()).map_err(|e| e.to_string())?;
+    match docker.inspect_image(image).await {
+        Ok(_) => Ok(true),
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => Ok(false),
+        Err(e) => Err(e.to_string()),
     }
-    Ok(!String::from_utf8_lossy(&out.stdout).trim().is_empty())
 }
 
 /// 从 `Python 3.14.8` 解析 (3, 14)。

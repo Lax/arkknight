@@ -5,6 +5,7 @@ pub mod device;
 pub mod doctor;
 pub mod init;
 pub mod maa;
+pub mod mower;
 pub mod provision;
 pub mod schedule;
 pub mod server;

@@ -26,9 +26,9 @@ use serde_json::json;
 
 use arkknight_core::config::{AkopsConfig, Workdir};
 use arkknight_core::device::build_backend;
-use arkknight_core::executor::{MaaCliExecutor, MowerProcessExecutor};
+use arkknight_core::executor::{MaaCliExecutor, MowerDockerExecutor, MowerProcessExecutor};
 use arkknight_core::lock::WorkdirGuard;
-use arkknight_core::model::{ExecutorKind, ScheduledExecutor};
+use arkknight_core::model::{ExecutorKind, RunnerKind, ScheduledExecutor};
 use arkknight_core::scheduler::{
     EngineDeps, EngineHandle, EngineShared, ExecutorFactory, run_engine, session::run_session_flow,
 };
@@ -53,13 +53,33 @@ pub(crate) async fn run(
     crate::commands::recover_orphans(&store);
 
     let device = crate::commands::resolve_device(&wd, None)?;
-    let factory: ExecutorFactory = Arc::new(|kind| match kind {
-        ExecutorKind::Mower => Ok(Box::new(MowerProcessExecutor::new(if cfg!(windows) {
-            "python"
-        } else {
-            "python3"
-        }))),
-        ExecutorKind::Maa => Ok(Box::new(MaaCliExecutor::new("maa"))),
+    // Docker 客户端只在配置了 docker_host 或本机有 daemon 时才连得通；
+    // 连不上且无 docker 会话使用时工厂报错即可（ProcessRunner 不受影响）
+    let docker = cfg
+        .paths
+        .docker_host_option()
+        .map(|h| arkknight_core::executor::connect_docker(Some(h)));
+    let image = cfg.paths.docker_mower_image.clone();
+    let docker_host = cfg.paths.docker_host_option().map(str::to_string);
+    let factory: ExecutorFactory = Arc::new(move |kind, runner| match (kind, runner) {
+        (ExecutorKind::Mower, RunnerKind::Docker) => {
+            // 每次会话现连（bollard 客户端廉价，且失败信息可直达用户）
+            let d = match &docker {
+                Some(Ok(d)) => d.clone(),
+                Some(Err(e)) => return Err(e.to_string()),
+                None => arkknight_core::executor::connect_docker(docker_host.as_deref())
+                    .map_err(|e| e.to_string())?,
+            };
+            Ok(Box::new(MowerDockerExecutor::new(d, image.clone())))
+        }
+        (ExecutorKind::Mower, RunnerKind::Process) => {
+            Ok(Box::new(MowerProcessExecutor::new(if cfg!(windows) {
+                "python"
+            } else {
+                "python3"
+            })))
+        }
+        (ExecutorKind::Maa, _) => Ok(Box::new(MaaCliExecutor::new("maa"))),
     });
 
     let shared = Arc::new(EngineShared {
@@ -428,7 +448,9 @@ async fn api_processes(
             .as_deref()
             .map(arkknight_core::executor::parse_locator)
             .unwrap_or((None, None));
-        let alive = pid.map(|p| crate::commands::session::pid_alive(Some(p))).unwrap_or(false);
+        let alive = pid
+            .map(|p| crate::commands::session::pid_alive(Some(p)))
+            .unwrap_or(false);
         if let Some(p) = pid {
             owned_pids.insert(p);
         }
@@ -486,7 +508,9 @@ fn scan_external_processes(owned_pids: &std::collections::HashSet<u32>) -> Vec<s
         let cmdline = cmdline.replace('\u{0}', " ");
         let kind = if cmdline.contains("run_server.py") {
             "mower"
-        } else if cmdline.contains("/maa ") || cmdline.ends_with("/maa") || cmdline.contains("maa run")
+        } else if cmdline.contains("/maa ")
+            || cmdline.ends_with("/maa")
+            || cmdline.contains("maa run")
         {
             "maa"
         } else {
@@ -661,6 +685,7 @@ fn account_create_inner(
         uid: body.uid,
         enabled: true,
         schedule: arkknight_core::model::AccountSchedule {
+            runner: Default::default(),
             windows,
             priority: body.priority.unwrap_or(50),
             slice: None,
@@ -1230,7 +1255,7 @@ mod tests {
     fn state_with_token(token: &str) -> AppState {
         let store = Arc::new(Store::open_in_memory().expect("打开内存库"));
         let (_, handle) = EngineHandle::new();
-        let factory: ExecutorFactory = Arc::new(|_| Err("测试不需要真实执行器".to_string()));
+        let factory: ExecutorFactory = Arc::new(|_, _| Err("测试不需要真实执行器".to_string()));
         AppState {
             wd: Workdir::new(std::env::temp_dir().join("arkknight-auth-test")),
             shared: Arc::new(EngineShared {

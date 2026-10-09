@@ -93,6 +93,7 @@ pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
                 uid,
                 enabled: true,
                 schedule: AccountSchedule {
+                    runner: Default::default(),
                     windows: windows_parsed,
                     priority,
                     slice,

@@ -12,9 +12,11 @@ use std::io::Seek;
 
 use arkknight_core::config::Workdir;
 use arkknight_core::executor::mower::{parse_locator, stop_via_http};
-use arkknight_core::executor::{MaaCliExecutor, MowerProcessExecutor, SessionCtx};
+use arkknight_core::executor::{
+    MaaCliExecutor, MowerDockerExecutor, MowerProcessExecutor, SessionCtx, connect_docker,
+};
 use arkknight_core::lock::WorkdirGuard;
-use arkknight_core::model::ExecutorKind;
+use arkknight_core::model::{ExecutorKind, RunnerKind};
 use arkknight_core::store::SessionRow;
 use arkknight_core::{config::AkopsConfig, store::Store};
 use std::sync::Arc;
@@ -33,6 +35,9 @@ pub enum SessionCmd {
         /// MAA 任务名（仅 --executor maa；来自 accounts/<key>/maa/tasks/）
         #[arg(long)]
         task: Option<String>,
+        /// 运行形态（覆盖 account.toml schedule.runner：process | docker）
+        #[arg(long)]
+        runner: Option<String>,
     },
     /// 停止会话（优雅 + 超时强杀）
     Stop {
@@ -76,7 +81,8 @@ pub(crate) async fn run(wd: Workdir, cmd: SessionCmd) -> Result<()> {
                     executor,
                     slice,
                     task,
-                } => start(wd, guard, store, account, executor, slice, task).await,
+                    runner,
+                } => start(wd, guard, store, account, executor, slice, task, runner).await,
                 SessionCmd::Stop { id, account, grace } => {
                     stop(wd, guard, store, id, account, grace).await
                 }
@@ -90,13 +96,28 @@ fn python_bin() -> &'static str {
     if cfg!(windows) { "python" } else { "python3" }
 }
 
-fn build_executor(kind: ExecutorKind) -> Box<dyn arkknight_core::executor::Executor> {
-    match kind {
-        ExecutorKind::Mower => Box::new(MowerProcessExecutor::new(python_bin())),
-        ExecutorKind::Maa => Box::new(MaaCliExecutor::new("maa")),
+fn build_executor(
+    kind: ExecutorKind,
+    runner: RunnerKind,
+    cfg: &AkopsConfig,
+) -> anyhow::Result<Box<dyn arkknight_core::executor::Executor>> {
+    match (kind, runner) {
+        (ExecutorKind::Mower, RunnerKind::Docker) => {
+            let docker = connect_docker(cfg.paths.docker_host_option())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok(Box::new(MowerDockerExecutor::new(
+                docker,
+                cfg.paths.docker_mower_image.clone(),
+            )))
+        }
+        (ExecutorKind::Mower, RunnerKind::Process) => {
+            Ok(Box::new(MowerProcessExecutor::new(python_bin())))
+        }
+        (ExecutorKind::Maa, _) => Ok(Box::new(MaaCliExecutor::new("maa"))),
     }
 }
 
+#[allow(clippy::too_many_arguments)] // CLI 子命令参数平铺，收敛成 struct 反而隔一层
 async fn start(
     wd: Workdir,
     _guard: WorkdirGuard,
@@ -105,6 +126,7 @@ async fn start(
     executor_name: String,
     slice: Option<String>,
     task: Option<String>,
+    runner_override: Option<String>,
 ) -> Result<()> {
     let cfg: AkopsConfig = wd.load_config()?;
     let account = wd.load_account(&account_key)?;
@@ -120,6 +142,12 @@ async fn start(
             "--executor maa 需要 --task <名称>（accounts/{account_key}/maa/tasks/ 下的任务文件）"
         );
     }
+    let runner = match runner_override.as_deref() {
+        Some("process") => RunnerKind::Process,
+        Some("docker") => RunnerKind::Docker,
+        Some(other) => bail!("runner {other:?} 不合法：process|docker"),
+        None => account.schedule.runner,
+    };
 
     // 一账号至多一个活跃会话（§6.5）
     if let Some(s) = store
@@ -134,8 +162,8 @@ async fn start(
         .create_session(arkknight_core::store::NewSession {
             account_key: &account.key,
             device_name: &dev.name,
-            executor: "mower",
-            runner: Some("process"),
+            executor: arkknight_core::config::executor_name(kind),
+            runner: Some(runner.as_str()),
             state: "created",
             mower_port: None,
             slice_deadline_ms: None,
@@ -191,14 +219,14 @@ async fn start(
             docker_adb: dev.connection.docker_adb.clone(),
             docker_network: dev.connection.docker_network.clone(),
         },
-        runner: arkknight_core::model::RunnerKind::Process,
+        runner,
         mower_port: port,
         workdir: wd.root.clone(),
         mower_checkout: cfg.paths.mower_dir_expanded(),
         maa_task: task.clone(),
     };
 
-    let executor = build_executor(kind);
+    let executor = build_executor(kind, runner, &cfg)?;
     store
         .update_session_state(session_id, "running", "executor_starting", None)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -313,6 +341,28 @@ async fn stop_session(
                 stopped = true;
             }
             Err(e) => println!("  POST /stop 不可达（{e}），等待进程退出或超时强杀"),
+        }
+    }
+    // Docker 会话：HTTP 不可达时走 bollard stop（端口可能未发布或容器网络隔离）
+    let container = s.locator.as_deref().and_then(|l| {
+        l.split_whitespace()
+            .find_map(|p| p.strip_prefix("container="))
+            .map(str::to_string)
+    });
+    if s.executor == "mower"
+        && !stopped
+        && let Some(name) = container
+    {
+        let cfg = wd.load_config()?;
+        match connect_docker(cfg.paths.docker_host_option()).map_err(|e| anyhow::anyhow!("{e}")) {
+            Ok(d) => match arkknight_core::executor::stop_and_remove(&d, &name, grace).await {
+                Ok(()) => {
+                    println!("  已 docker stop 并移除容器 {name}");
+                    stopped = true;
+                }
+                Err(e) => println!("  docker 停止 {name} 失败：{e}"),
+            },
+            Err(e) => println!("  {e}"),
         }
     }
     // 进程级兜底：locator 里的 pid

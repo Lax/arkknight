@@ -19,6 +19,7 @@ dirs.workspace = true
 rusqlite.workspace = true
 fslock.workspace = true
 chrono.workspace = true
+bollard.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

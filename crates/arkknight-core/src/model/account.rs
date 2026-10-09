@@ -108,6 +108,9 @@ pub struct AccountSchedule {
     pub priority: u8,
     /// 时间片长度；None 用全局 `scheduler.default_slice`
     pub slice: Option<HumanDuration>,
+    /// mower 会话运行形态（ADR-0001 D5；默认 process。MAA 会话不受影响）
+    #[serde(default)]
+    pub runner: crate::model::RunnerKind,
 }
 
 impl Default for AccountSchedule {
@@ -116,6 +119,7 @@ impl Default for AccountSchedule {
             windows: Vec::new(),
             priority: 50,
             slice: None,
+            runner: crate::model::RunnerKind::Process,
         }
     }
 }

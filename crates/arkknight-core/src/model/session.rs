@@ -16,13 +16,24 @@ pub enum ExecutorKind {
 }
 
 /// mower 会话运行形态（Runner 子层，ADR-0001 D5）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunnerKind {
     /// bollard 容器（Linux / Docker Desktop）
     Docker,
-    /// 本地进程（`python run_server.py`，任意平台）
+    /// 本地进程（`python run_server.py`，任意平台；缺省）
+    #[default]
     Process,
+}
+
+impl RunnerKind {
+    /// SQLite `sessions.runner` 列与展示的字符串形态。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RunnerKind::Docker => "docker",
+            RunnerKind::Process => "process",
+        }
+    }
 }
 
 /// 会话状态机（§10.2）。

@@ -799,7 +799,21 @@ mod tests {
         let base = free_port_base(4).expect("找不到 4 段连续空闲端口");
         let range = [base, base + 3];
 
-        // 预占段首端口（模拟已记账）
+        // 先占住整段，消除"探测空闲 → 使用"窗口内的并行/内核临时端口竞争；
+        // 再按测试需要逐个释放
+        let guards: Vec<(u16, std::net::TcpListener)> = (0..4)
+            .map(|i| {
+                let p = base + i;
+                let l = std::net::TcpListener::bind(("127.0.0.1", p)).unwrap();
+                (p, l)
+            })
+            .collect();
+
+        // 预占段首端口（模拟已记账）：释放监听后以 DB 记账形态存在。
+        // guards 按值取出段首监听即可（其余项通过索引取用，无需 clone）
+        let mut guards = guards;
+        let base_listener = guards.remove(0).1;
+        drop(base_listener);
         store
             .conn()
             .execute(
@@ -807,8 +821,19 @@ mod tests {
                 [base as i64],
             )
             .unwrap();
-        // 段次端口（base+1）被系统层占用
-        let hold = std::net::TcpListener::bind(("127.0.0.1", base + 1)).unwrap();
+        // 段次端口（base+1）保持系统层占用；其余端口放回空闲
+        let hold_idx = guards
+            .iter()
+            .position(|(p, _)| *p == base + 1)
+            .expect("base+1");
+        let hold = guards.remove(hold_idx).1;
+        for (_, l) in guards {
+            drop(l);
+        }
+        // 本内核（Lax 7.2.9）实测：close 后立刻重绑同一环回端口会偶发
+        // EADDRINUSE（无 TIME_WAIT 也发生）。给一个短窗口再进入分配断言；
+        // 生产侧 alloc_port 探测失败只会跳过该端口，无害。
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         let p1 = store
             .alloc_port("mower_webview", "session:1", range)
@@ -826,6 +851,7 @@ mod tests {
         assert!(matches!(err, StoreError::PortExhausted { .. }));
 
         drop(hold);
+        std::thread::sleep(std::time::Duration::from_millis(100));
         // 释放后可复用：段次端口先被探测到
         assert_eq!(store.release_ports("session:1").unwrap(), 1);
         assert_eq!(
@@ -837,8 +863,11 @@ mod tests {
     }
 
     /// 找一段连续 `n` 个当前可绑定的端口（跳过系统保留与在用端口）。
+    /// 取 25000-32000：内核临时源端口段（默认 32768-60999）之外——
+    /// 任何并行线程/进程做出站连接都可能被内核占用 49152+ 的地址，
+    /// 与探测段相撞（曾致偶发 EADDRINUSE）；也避开默认会话段 58100+。
     fn free_port_base(n: u16) -> Option<u16> {
-        for base in 49152..60000u16.saturating_sub(n) {
+        for base in 25000..32000u16.saturating_sub(n) {
             if (base..base + n).all(|p| {
                 std::net::TcpListener::bind(("127.0.0.1", p))
                     .map(drop)

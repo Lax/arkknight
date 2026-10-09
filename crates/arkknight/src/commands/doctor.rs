@@ -10,6 +10,7 @@ use arkknight_core::doctor::{self, Level};
 pub(crate) async fn run(wd: Workdir, mower_dir_override: Option<&Path>) -> Result<()> {
     // CLI --mower-dir 即时覆盖（不落盘）
     let overrides = detect::DetectOverrides {
+        docker_host: None,
         adb_path: None,
         mower_dir: mower_dir_override.map(|d| d.to_string_lossy().into_owned()),
     };

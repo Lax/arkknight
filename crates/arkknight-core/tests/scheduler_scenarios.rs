@@ -87,6 +87,7 @@ fn account_with_window(id: &str, priority: u8) -> Account {
         uid: None,
         enabled: true,
         schedule: arkknight_core::model::AccountSchedule {
+            runner: Default::default(),
             // 全天窗口：任何测试时刻都就绪
             windows: vec![arkknight_core::model::TimeWindow {
                 start: "00:00".into(),
@@ -159,7 +160,7 @@ fn engine_deps(b: &Bench, factory: ExecutorFactory, maa: &std::path::Path) -> En
 }
 
 fn alive_factory() -> ExecutorFactory {
-    Arc::new(|_| {
+    Arc::new(|_, _| {
         Ok(Box::new(FakeExecutor {
             health: Arc::new(AtomicU8::new(0)),
         }) as Box<dyn Executor>)
@@ -240,7 +241,7 @@ async fn watchdog_dead_executor_terminates_session() {
     let accounts = [account_with_window("a", 50)];
     let b = bench(&accounts);
     let maa = fake_maa(b.dir.path(), 0);
-    let dead_factory: ExecutorFactory = Arc::new(|_| {
+    let dead_factory: ExecutorFactory = Arc::new(|_, _| {
         Ok(Box::new(FakeExecutor {
             health: Arc::new(AtomicU8::new(1)),
         }) as Box<dyn Executor>)

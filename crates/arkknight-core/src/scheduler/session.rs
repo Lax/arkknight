@@ -16,9 +16,9 @@ use crate::model::{Device, ExecutorKind, RunnerKind, SessionOutcome};
 use crate::store::{NewSession, Store};
 use crate::switch::{SwitchPlan, execute_switch};
 
-/// 引擎注入的执行器工厂（测试用 Fake 替换；INV-3）。
+/// 引擎注入的执行器工厂（测试用 Fake 替换；INV-3）。mower 按 runner 分派 Docker|Process。
 pub type ExecutorFactory =
-    Arc<dyn Fn(ExecutorKind) -> Result<Box<dyn Executor>, String> + Send + Sync>;
+    Arc<dyn Fn(ExecutorKind, RunnerKind) -> Result<Box<dyn Executor>, String> + Send + Sync>;
 
 /// 停止原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +120,7 @@ pub async fn run_session_flow(
             ExecutorKind::Mower => "mower",
             ExecutorKind::Maa => "maa",
         },
-        runner: Some("process"),
+        runner: Some(account.schedule.runner.as_str()),
         state: "queued",
         mower_port: None,
         slice_deadline_ms: None,
@@ -218,13 +218,13 @@ pub async fn run_session_flow(
             docker_adb: device.connection.docker_adb.clone(),
             docker_network: device.connection.docker_network.clone(),
         },
-        runner: RunnerKind::Process,
+        runner: account.schedule.runner,
         mower_port: port,
         workdir: wd.root.clone(),
         mower_checkout: cfg.paths.mower_dir_expanded(),
         maa_task: task,
     };
-    let executor = match factory(executor_kind) {
+    let executor = match factory(executor_kind, account.schedule.runner) {
         Ok(e) => e,
         Err(e) => {
             let _ = store.finish_session(

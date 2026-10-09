@@ -22,6 +22,7 @@ pub(crate) async fn run(dir: Option<&Path>) -> anyhow::Result<()> {
 
     println!("初始化工作目录 {} …", target.display());
     let det = detect::detect(&detect::DetectOverrides {
+        docker_host: None,
         adb_path: None,
         mower_dir: None,
     })

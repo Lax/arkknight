@@ -232,6 +232,7 @@ arkknight/
 | `schedule.windows` | `[{start,end,executor,task?}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa`；maa 窗口可指定 `task`（accounts/<key>/maa/tasks/ 下的任务名，缺省拒绝调度 maa 窗口）；窗口须 start<end（不跨午夜，校验拒绝） |
 | `schedule.priority` | int 0-100 | 队列优先级，默认 50 |
 | `schedule.slice` | duration | 时间片长度，覆盖全局默认（默认 2h） |
+| `schedule.runner` | `process \| docker` | mower 会话运行形态（ADR-0001 D5），默认 `process`；MAA 会话不受影响 |
 | `provisioned_on` | `[device]` | 已人工登录过的设备（亲和的种子数据，正式记录在 SQLite） |
 
 ### 6.2 Device（文件：`devices/<name>.toml`）
@@ -480,6 +481,8 @@ maa_dir   = "~/.local/share/arkknight/maa"     # maa-cli 安装根（doctor 可�
 mower_dir = "~/src/arknights-mower"        # mower 检出（ProcessRunner 用）
 adb_path  = "adb"
 docker_mower_image = "arkknight-mower:latest"  # DockerRunner 用
+docker_host = ""                            # Docker 端点；空=本机默认（unix socket/命名管道）；
+                                            # 容器内部署指向 socket-proxy（tcp://socket-proxy:2375）
 
 [server]
 bind  = "127.0.0.1"
@@ -549,7 +552,7 @@ watermark    = { free_mem_gb = 14, cpu_idle_pct = 20 }   # 扩容准入水位
 | 对象 | 程序更新 | 资源更新 | 触发 |
 |---|---|---|---|
 | **MAA** | `maa self update`（CLI）+ `maa update`（MaaCore） | maa-cli 资源 git 热更新（`[resource] auto_update` 或手动） | `arkknight maa update [--resource-only]`；控制台按钮 |
-| **mower** | DockerRunner=重建镜像（用户 Dockerfile，pin commit）；ProcessRunner=`git fetch + checkout <ref>` | 无独立资源（随代码） | `arkknight mower update [--ref <commit/tag>]`；默认跟踪 alpha，更新前显示 changelog，支持回滚（重 pin 上一 commit） |
+| **mower** | DockerRunner=重建镜像（用户 Dockerfile，pin commit）；ProcessRunner=`git fetch + checkout FETCH_HEAD`（detach） | 无独立资源（随代码） | `arkknight mower update [--ref <commit/tag>] [--runner process\|docker]`、`mower rollback`、`mower version`；默认跟踪 alpha，pin 记录落 `state/mower-pin.toml`；有活跃会话或 daemon 存活时拒绝更新 |
 | **模拟器镜像/APK**（M2） | `redroid-script` 构建基础镜像 | 流水线：装 APK（`ak.url` 最新版）→ 进游戏下载资源 → `docker commit` 新日期标签 → 设备滚动重建（避让活跃会话） | 手动 `arkknight device upgrade-image`；游戏版本更新后执行 |
 
 约束：所有更新操作必须**避让活跃会话**（等待或要求先 drain）；更新动作与结果记入 SQLite 维护日志。

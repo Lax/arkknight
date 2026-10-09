@@ -66,6 +66,8 @@ pub struct MowerInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct DockerInfo {
     pub version: String,
+    /// 探测所用端点（配置 paths.docker_host 或 "local defaults"）
+    pub endpoint: String,
 }
 
 /// 环境探测结果。
@@ -85,6 +87,8 @@ pub struct DetectOverrides {
     pub adb_path: Option<String>,
     /// 显式 mower 检出（配置 `paths.mower_dir`）
     pub mower_dir: Option<String>,
+    /// Docker 端点（配置 `paths.docker_host`）
+    pub docker_host: Option<String>,
 }
 
 /// 探测 adb：二进制 + 版本首行。
@@ -182,11 +186,22 @@ pub async fn detect_python() -> Option<ToolInfo> {
     None
 }
 
-/// 探测 Docker daemon 可达性。
-pub async fn detect_docker() -> Option<DockerInfo> {
-    which("docker")?;
-    let version = run_capture("docker", &["info", "--format", "{{.ServerVersion}}"], None).await?;
-    Some(DockerInfo { version })
+/// 探测 Docker daemon 可达性（bollard 直连：unix socket / 命名管道 /
+/// `paths.docker_host` 指向的 tcp 端点；容器内部署走 socket-proxy 即可，
+/// 不依赖容器内有 docker CLI）。
+pub async fn detect_docker(host: Option<&str>) -> Option<DockerInfo> {
+    let docker = crate::executor::connect_docker(host).ok()?;
+    docker.ping().await.ok()?;
+    let version = docker
+        .version()
+        .await
+        .ok()
+        .and_then(|v| v.version)
+        .unwrap_or_default();
+    Some(DockerInfo {
+        version,
+        endpoint: host.unwrap_or("local defaults").to_string(),
+    })
 }
 
 /// 全量探测。
@@ -196,7 +211,7 @@ pub async fn detect(ov: &DetectOverrides) -> Detection {
         detect_maa(),
         detect_mower(ov.mower_dir.as_deref()),
         detect_python(),
-        detect_docker(),
+        detect_docker(ov.docker_host.as_deref()),
     );
     Detection {
         adb,

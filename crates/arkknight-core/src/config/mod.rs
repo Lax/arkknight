@@ -75,6 +75,9 @@ pub struct PathsConfig {
     pub adb_path: String,
     /// DockerRunner 使用的 mower 镜像
     pub docker_mower_image: String,
+    /// Docker 端点（空 = 本机默认：Linux unix socket / Windows 命名管道；
+    /// 支持 `unix:///path`、`tcp://host:port`。容器内部署指向 socket-proxy）
+    pub docker_host: String,
 }
 
 impl Default for PathsConfig {
@@ -84,6 +87,7 @@ impl Default for PathsConfig {
             mower_dir: "~/src/arknights-mower".into(),
             adb_path: "adb".into(),
             docker_mower_image: "arkknight-mower:latest".into(),
+            docker_host: String::new(),
         }
     }
 }
@@ -97,6 +101,11 @@ impl PathsConfig {
     }
     pub fn adb_path_expanded(&self) -> PathBuf {
         expand_path(&self.adb_path)
+    }
+    /// Docker 端点：空串归一为 None（bollard 走本机默认）。
+    pub fn docker_host_option(&self) -> Option<&str> {
+        let h = self.docker_host.trim();
+        (!h.is_empty()).then_some(h)
     }
 }
 

@@ -28,6 +28,7 @@ pub mod model;
 pub mod scheduler;
 pub mod store;
 pub mod switch;
+pub mod update;
 
 /// 工作目录配置 schema 版本（`arkknight.toml` 的 `schema_version`）。
 pub const SCHEMA_VERSION: u32 = 1;

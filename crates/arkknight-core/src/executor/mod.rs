@@ -8,6 +8,7 @@
 
 pub mod maa;
 pub mod mower;
+pub mod mower_docker;
 
 use std::time::Duration;
 
@@ -18,6 +19,10 @@ use crate::model::{Account, ExecutorKind, RunnerKind};
 
 pub use maa::MaaCliExecutor;
 pub use mower::{MowerProcessExecutor, parse_locator, stop_via_http};
+pub use mower_docker::{MowerDockerExecutor, connect_docker, stop_and_remove};
+
+/// bollard 再导出：CLI 层复用同一版本（`session stop` 的 docker 兜底）。
+pub use bollard;
 
 /// 会话 webview token 的单源生成（深链、/stop、进程列表共用）。
 pub fn webview_token_for(session_id: u64) -> String {

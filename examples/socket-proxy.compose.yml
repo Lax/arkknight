@@ -1,0 +1,38 @@
+# socket-proxy 边车 + arkknight 容器化部署示例（docs/dev/docker-runner.md §4）
+#
+# 用法：docker compose -f examples/socket-proxy.compose.yml up -d
+# arkknight.toml 里配 paths.docker_host = "tcp://socket-proxy:2375"
+#
+# 原则（设计 §13）：业务容器不裸挂 docker.sock；socket-proxy 按动词白名单
+# 开放调度器所需的最小 Docker API 集。
+
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      # 调度器所需最小集：容器生命周期 + 镜像检查；不开 SECRETS/ALLOW_RESTARTS 等
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [internal]
+
+  arkknight:
+    image: ghcr.io/lax/arkknight:latest
+    restart: unless-stopped
+    command: server --workdir /arkreunion
+    ports:
+      - "127.0.0.1:7100:7100"
+    environment:
+      # 也可直接写 arkknight.toml [paths] docker_host
+      ARKKNIGHT_DOCKER_HOST: tcp://socket-proxy:2375
+    volumes:
+      - ./workdir:/arkreunion
+    networks: [internal]
+
+networks:
+  internal:
+    # 如需让会话容器（DockerRunner）与 redroid 设备互通，
+    # 把 redroid 的 compose 网络external 接进来，保证 docker_adb 可路由
