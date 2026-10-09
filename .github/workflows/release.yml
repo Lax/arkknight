@@ -1,9 +1,9 @@
 # 自动发布流水线：tag 推送（v*）或手动触发
 # 产出（§16 三平台单二进制）：
-#   - arkreunion-v{ver}-x86_64-unknown-linux-gnu.tar.gz（另出 .deb）
-#   - arkreunion-v{ver}-aarch64-unknown-linux-gnu.tar.gz
-#   - arkreunion-v{ver}-x86_64-pc-windows-msvc.zip
-#   - arkreunion-v{ver}-aarch64-apple-darwin.tar.gz
+#   - arkknight-v{ver}-x86_64-unknown-linux-gnu.tar.gz（另出 .deb）
+#   - arkknight-v{ver}-aarch64-unknown-linux-gnu.tar.gz
+#   - arkknight-v{ver}-x86_64-pc-windows-msvc.zip
+#   - arkknight-v{ver}-aarch64-apple-darwin.tar.gz
 #   - SHA256SUMS
 # 二进制均含 rust-embed 嵌入的控制台（构建前先 npm build ui/dist）。
 # Linux aarch64 为交叉编译（rusqlite bundled 走 CC 交叉变量，已在 CI 验证）。
@@ -17,7 +17,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BIN_NAME: arkreunion
+  BIN_NAME: arkknight
 
 permissions:
   contents: write
@@ -98,13 +98,13 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build (release)
-        run: cargo build --release --target ${{ matrix.target }} -p arkreunion
+        run: cargo build --release --target ${{ matrix.target }} -p arkknight
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          PKG="arkreunion-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}"
+          PKG="arkknight-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}"
           mkdir -p "dist/$PKG"
           cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/$PKG/"
           cp README.md LICENSE "dist/$PKG/"
@@ -116,14 +116,14 @@ jobs:
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME } else { 'dev' }
-          $pkg = "arkreunion-$version-${{ matrix.target }}"
+          $pkg = "arkknight-$version-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$pkg" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/$env:BIN_NAME.exe" "dist/$pkg/"
           Copy-Item README.md, LICENSE "dist/$pkg/"
           Compress-Archive -Path "dist/$pkg" -DestinationPath "dist/$pkg.zip"
           "PACKAGE=dist/$pkg.zip" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
 
-      # Linux x86_64 追加 .deb 安装包（cargo-deb，见 crates/arkreunion/Cargo.toml metadata）
+      # Linux x86_64 追加 .deb 安装包（cargo-deb，见 crates/arkknight/Cargo.toml metadata）
       - name: Package (.deb)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
@@ -132,7 +132,7 @@ jobs:
           mkdir -p target/release
           cp "target/${{ matrix.target }}/release/$BIN_NAME" target/release/
           cargo install --locked cargo-deb
-          cargo deb -p arkreunion --no-build --output dist/
+          cargo deb -p arkknight --no-build --output dist/
           for f in dist/*.deb; do echo "DEB=$f" >> "$GITHUB_ENV"; done
 
       - uses: actions/upload-artifact@v4
@@ -168,7 +168,7 @@ jobs:
           PKGVER="${PKGVER:-0.0.0}"
           mkdir -p pkgsrc
           cat > pkgsrc/PKGBUILD <<EOF
-          pkgname=arkreunion
+          pkgname=arkknight
           pkgver=$PKGVER
           pkgrel=1
           pkgdesc='Arknights multi-account orchestrator (MAA + mower scheduling)'
@@ -177,14 +177,14 @@ jobs:
           license=('MIT')
           depends=('glibc')
           options=('!strip' '!debug')
-          source=("arkreunion-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu.tar.gz")
+          source=("arkknight-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu.tar.gz")
           sha256sums=('SKIP')
           package() {
-            install -Dm755 "\$srcdir/arkreunion-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu/arkreunion" \
-              "\$pkgdir/usr/bin/arkreunion"
+            install -Dm755 "\$srcdir/arkknight-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu/arkknight" \
+              "\$pkgdir/usr/bin/arkknight"
           }
           EOF
-          cp "dist/arkreunion-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu.tar.gz" pkgsrc/
+          cp "dist/arkknight-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu.tar.gz" pkgsrc/
           chown -R builder:builder pkgsrc dist
       - name: makepkg
         run: |
@@ -210,32 +210,32 @@ jobs:
         run: |
           PKGVER="${GITHUB_REF_NAME#v}"
           PKGVER="${PKGVER:-0.0.0}"
-          mkdir -p "overlay/games-util/arkreunion-bin" "overlay/metadata" "overlay/profiles"
-          echo arkreunion > overlay/profiles/repo_name
+          mkdir -p "overlay/games-util/arkknight-bin" "overlay/metadata" "overlay/profiles"
+          echo arkknight > overlay/profiles/repo_name
           cat > overlay/metadata/layout.conf <<EOF
           masters = gentoo
           thin-manifests = true
           EOF
-          cat > "overlay/games-util/arkreunion-bin/arkreunion-bin-${PKGVER}.ebuild" <<EOF
-          # Copyright 2026 arkreunion contributors
+          cat > "overlay/games-util/arkknight-bin/arkknight-bin-${PKGVER}.ebuild" <<EOF
+          # Copyright 2026 arkknight contributors
           # Distributed under the terms of the GNU General Public License v2
-          # 由 arkreunion release 流水线生成；整目录可作为独立 overlay 仓库使用（external project）
+          # 由 arkknight release 流水线生成；整目录可作为独立 overlay 仓库使用（external project）
 
           EAPI=8
 
           DESCRIPTION="Arknights multi-account orchestrator (MAA + mower scheduling)"
           HOMEPAGE="https://github.com/${REPO}"
-          SRC_URI="https://github.com/${REPO}/releases/download/v\${PV}/arkreunion-v\${PV}-x86_64-unknown-linux-gnu.tar.gz -> arkreunion-\${PV}-linux-x86_64.tar.gz"
-          S="\${WORKDIR}/arkreunion-v\${PV}-x86_64-unknown-linux-gnu"
+          SRC_URI="https://github.com/${REPO}/releases/download/v\${PV}/arkknight-v\${PV}-x86_64-unknown-linux-gnu.tar.gz -> arkknight-\${PV}-linux-x86_64.tar.gz"
+          S="\${WORKDIR}/arkknight-v\${PV}-x86_64-unknown-linux-gnu"
 
           LICENSE="MIT"
           SLOT="0"
           KEYWORDS="~amd64"
           RESTRICT="strip"
-          QA_PREBUILT="usr/bin/arkreunion"
+          QA_PREBUILT="usr/bin/arkknight"
 
           src_install() {
-            newbin arkreunion arkreunion
+            newbin arkknight arkknight
             einstalldocs
           }
           EOF
@@ -243,11 +243,11 @@ jobs:
       - name: 打包 overlay（保持目录结构）
         run: |
           mkdir -p dist
-          tar -czf dist/arkreunion-overlay.tar.gz -C overlay .
+          tar -czf dist/arkknight-overlay.tar.gz -C overlay .
       - uses: actions/upload-artifact@v4
         with:
           name: gentoo-ebuild
-          path: dist/arkreunion-overlay.tar.gz
+          path: dist/arkknight-overlay.tar.gz
           if-no-files-found: error
           retention-days: 7
 

@@ -1,0 +1,9 @@
+# 由 arkknight 物化器生成（INV-1：官方开始唤醒切号）；请勿手改，自定义任务请另建文件
+[[tasks]]
+name = "切号并启动"
+type = "StartUp"
+
+[tasks.params]
+client_type = "Official"
+account_name = "123****8901"
+start_game_enabled = true

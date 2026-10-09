@@ -6,8 +6,8 @@
 
 ```bash
 cargo test --workspace                      # 全量（单测 + golden + 调度场景）
-cargo test -p arkreunion-core --lib         # 只跑库单测
-cargo test -p arkreunion-core --test golden # 只跑物化器 golden
+cargo test -p arkknight-core --lib         # 只跑库单测
+cargo test -p arkknight-core --test golden # 只跑物化器 golden
 cd ui && npm run build                      # 前端类型检查 + 构建（vue-tsc）
 ```
 
@@ -25,15 +25,15 @@ cd ui && npm run build                     # 含 vue-tsc 类型检查
 | 层 | 位置 | 覆盖什么 |
 |---|---|---|
 | 单元（内联） | 各模块 `#[cfg(test)] mod tests` | 纯函数、校验、物化、状态机 |
-| golden | `crates/arkreunion-core/tests/golden.rs` + `tests/golden/` | 物化器产物快照 |
-| 调度场景 | `crates/arkreunion-core/tests/scheduler_scenarios.rs` | 引擎全场景（FakeExecutor） |
-| API 契约 | `crates/arkreunion/src/commands/server.rs` 的 `mod tests` | Router + 鉴权 + 错误 hint |
+| golden | `crates/arkknight-core/tests/golden.rs` + `tests/golden/` | 物化器产物快照 |
+| 调度场景 | `crates/arkknight-core/tests/scheduler_scenarios.rs` | 引擎全场景（FakeExecutor） |
+| API 契约 | `crates/arkknight/src/commands/server.rs` 的 `mod tests` | Router + 鉴权 + 错误 hint |
 
 ## golden-file 快照
 
 物化器（MAA profile / tasks、mower conf patch）的输出**必须**有快照比对。
 
-快照文件在 `crates/arkreunion-core/tests/golden/`：
+快照文件在 `crates/arkknight-core/tests/golden/`：
 
 ```
 mower_conf_in.yaml     # 输入（含刻意设置的干扰项）
@@ -46,8 +46,8 @@ startup_task.toml
 **改了物化器逻辑后更新快照：**
 
 ```bash
-ARKREUNION_UPDATE_GOLDEN=1 cargo test -p arkreunion-core --test golden
-git diff crates/arkreunion-core/tests/golden/     # 人工确认改动符合预期
+ARKKNIGHT_UPDATE_GOLDEN=1 cargo test -p arkknight-core --test golden
+git diff crates/arkknight-core/tests/golden/     # 人工确认改动符合预期
 ```
 
 改了不更新 → 测试失败，这是**故意的**。
@@ -121,7 +121,7 @@ golden 同时是「白名单改写没越界」的证明：对比 in/out 能看�
 
 | 项 | 验证方式 |
 |---|---|
-| 切号真的切对了账号 | `arkreunion switch <key>` + 人工确认游戏内账号 |
+| 切号真的切对了账号 | `arkknight switch <key>` + 人工确认游戏内账号 |
 | UID 核验 pipeline 的 roi 校准 | 不同分辨率下实机校准 `render_uid_check_pipeline` |
 | mower 深链 UI 改动持久化 | 会话中改 conf/plan，下次会话确认还在 |
 | 72h 无人值守轮转 | M1 总验收 |

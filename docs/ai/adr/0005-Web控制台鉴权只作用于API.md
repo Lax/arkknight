@@ -2,11 +2,11 @@
 
 - **状态**：已接受
 - **日期**：2026-10-09
-- **关联**：`../arkreunion-design.md` §17（安全考量）
+- **关联**：`../arkknight-design.md` §17（安全考量）
 
 ## 背景
 
-`arkreunion server` 的鉴权中间件 `auth_mw` 原先挂在整个 Router 上
+`arkknight server` 的鉴权中间件 `auth_mw` 原先挂在整个 Router 上
 （`.layer(middleware::from_fn_with_state(state, auth_mw))`），无差别拦截所有路由 ——
 包括 `/assets/*` 静态资源。
 

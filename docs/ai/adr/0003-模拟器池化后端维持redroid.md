@@ -2,7 +2,7 @@
 
 - **状态**：已接受
 - **日期**：2026-10-09
-- **关联**：ADR-0001 D6（设备抽象）、`../../arkreunion-design.md` §7.3（RedroidDocker 后端）、§12（模拟器镜像升级流水线）、`docs/dev/redroid-vs-waydroid.md`（完整评估）
+- **关联**：ADR-0001 D6（设备抽象）、`../../arkknight-design.md` §7.3（RedroidDocker 后端）、§12（模拟器镜像升级流水线）、`docs/dev/redroid-vs-waydroid.md`（完整评估）
 
 ## 背景
 
@@ -17,7 +17,7 @@ M2 需要按水位动态扩容安卓实例池，并要求「游戏大版本更�
 
 1. **headless**：redroid 原生（adb-first，无需显示栈）；waydroid 是 Wayland 桌面渲染优先，
    headless 只能靠 cage/weston/WebRTC 社区方案拼装。
-2. **多实例池**：redroid = N 个 Docker 容器，bollard 可编程编排（arkreunion 后端设计直接成立）；
+2. **多实例池**：redroid = N 个 Docker 容器，bollard 可编程编排（arkknight 后端设计直接成立）；
    waydroid 无官方多实例，靠 LXC hack。
 3. **镜像流水线**：redroid 的 `docker commit` + 镜像 tag + 数据卷分层与现有
    `Lax/mrfz:{port}-base/install/update-日期` 约定完全吻合；waydroid 只能整目录拷贝，
@@ -27,10 +27,10 @@ M2 需要按水位动态扩容安卓实例池，并要求「游戏大版本更�
 5. **GPU**：本机 NVIDIA + redroid + libndk 已长期验证（arknights2771）；waydroid 对
    NVIDIA 官方不支持（仅 nvidia-open 社区方案）。
 
-两者同为 Linux-only（内核 binder 依赖），不影响 arkreunion 跨平台承诺——Windows 场景由
+两者同为 Linux-only（内核 binder 依赖），不影响 arkknight 跨平台承诺——Windows 场景由
 External 后端（MuMu/雷电）承接，与本 ADR 无冲突。
 
-## APK 升级流水线（实测链路，M2 `arkreunion device upgrade-image` 依据）
+## APK 升级流水线（实测链路，M2 `arkknight device upgrade-image` 依据）
 
 官方短链 302 → `launcher.hypergryph.com/game/latest/<token>` → 返回含 CDN 直链的 HTML
 （如 `ak-fs.hypergryph.com/.../arknights-hg-2781.apk`，1.73GB，HEAD 405 须 GET，

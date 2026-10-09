@@ -1,25 +1,25 @@
 # 配置手册
 
-三类配置，权威定义在 [`../arkreunion-design.md` §11](../arkreunion-design.md)，本文面向使用者补充说明。
+三类配置，权威定义在 [`../arkknight-design.md` §11](../arkknight-design.md)，本文面向使用者补充说明。
 
 | 配置 | 位置 | 改完生效方式 |
 |---|---|---|
-| 全局策略 | `<workdir>/arkreunion.toml` | 改完 `arkreunion server` 重启 |
+| 全局策略 | `<workdir>/arkknight.toml` | 改完 `arkknight server` 重启 |
 | 账号 | `<workdir>/accounts/<key>/account.toml` | 部分可热改（`account enable/disable`），其余需停daemon |
 | 设备 | `<workdir>/devices/<name>.toml` | 需停 daemon |
 
-改配置前建议先 `arkreunion export` 备份（M2 交付，当前可用 `cp -r` 整目录）。
+改配置前建议先 `arkknight export` 备份（M2 交付，当前可用 `cp -r` 整目录）。
 
-## 全局：arkreunion.toml
+## 全局：arkknight.toml
 
 ### `[paths]`
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `adb_path` | `adb` | `init` 探测到绝对路径时会写绝对路径（避免 PATH 差异） |
-| `maa_dir` | `~/.local/share/arkreunion/maa` | maa-cli 安装根；`arkreunion maa install/update` 用 |
+| `maa_dir` | `~/.local/share/arkknight/maa` | maa-cli 安装根；`arkknight maa install/update` 用 |
 | `mower_dir` | `~/src/arknights-mower` | mower 检出（ProcessRunner 需要）。**改完跑 doctor** —— mower alpha 会动 schema |
-| `docker_mower_image` | `arkreunion-mower:latest` | DockerRunner 用（M2） |
+| `docker_mower_image` | `arkknight-mower:latest` | DockerRunner 用（M2） |
 
 ### `[server]`
 
@@ -97,8 +97,8 @@ task = "roguelike"                    # 仅 maa 窗口需要
 CLI 改这些字段（避免手改出错）：
 
 ```bash
-arkreunion account enable main        # / disable
-arkreunion account show main          # 原样打印文件
+arkknight account enable main        # / disable
+arkknight account show main          # 原样打印文件
 ```
 
 `uid` 缺省时切号跳过身份核验，doctor 提示串数据风险。可用 `provision` 录入，
@@ -130,12 +130,12 @@ notes = "1920x1080@280，nvidia GPU"
 - `host_adb` → ProcessRunner 与宿主侧 maa-cli 使用
 - `docker_adb` → DockerRunner 使用（未实现，需两者都填才算「Docker 兼容」）
 
-arkreunion 自身跑在容器里时，`host_adb` 要填**容器网络地址**（`arknights:5555`），
+arkknight 自身跑在容器里时，`host_adb` 要填**容器网络地址**（`arknights:5555`），
 因为容器内 `127.0.0.1` 指向容器自身。
 
 ## 会话自动生成的配置
 
-arkreunion 会在会话启动瞬间物化/改写以下文件（§11.4）：
+arkknight 会在会话启动瞬间物化/改写以下文件（§11.4）：
 
 | 文件 | 改写内容 |
 |---|---|
@@ -152,17 +152,17 @@ arkreunion 会在会话启动瞬间物化/改写以下文件（§11.4）：
 
 | 方式 | 说明 |
 |---|---|
-| `--workdir <DIR>` | 显式指定工作目录（默认从 cwd 向上探测 `arkreunion.toml`） |
+| `--workdir <DIR>` | 显式指定工作目录（默认从 cwd 向上探测 `arkknight.toml`） |
 | `--config <FILE>` | 用替代配置文件，其父目录即工作目录 |
 | `--maa-dir` / `--mower-dir` | 单次覆盖 `[paths]` |
 | `ARKOPS_MOWER_DIR` | mower 探测的环境变量（`init`/`doctor` 识别） |
 | `MOWER_DATA_DIR` | ProcessRunner 会话设置，指向 `accounts/<key>/mower-data` |
-| `MAA_CONFIG_DIR` | maa-cli 配置目录（arkreunion 按账号设置） |
+| `MAA_CONFIG_DIR` | maa-cli 配置目录（arkknight 按账号设置） |
 | `RUST_LOG` / `-v` / `-vv` | 日志级别（`info`/`debug`/`trace`） |
 
 ## 配置改了怎么验证
 
 ```bash
-arkreunion doctor        # 路径、账号一致性、端口段
-arkreunion status        # 账号/设备/会话/队列/退避
+arkknight doctor        # 路径、账号一致性、端口段
+arkknight status        # 账号/设备/会话/队列/退避
 ```

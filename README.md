@@ -1,71 +1,69 @@
-# arkreunion（塔露拉）—— 方舟多账号调度中心
+# arkknight · 方舟骑士
 
-> 整合运动的领袖负责「整合」；arkreunion 负责整合你的方舟自动化：**MAA × mower × 多账号**，一个二进制全管。
+<div align="center">
 
-跨平台（Linux / Windows / macOS）的明日方舟**多账号编排器**：在少量安卓设备（redroid、MuMu、雷电、物理机等）上，编排 [MAA](https://github.com/MaaAssistantArknights/MaaAssistantArknights)（账号切换 / 任务）与 [arknights-mower](https://github.com/ArkMowers/arknights-mower)（基建排班），按时间窗自动轮转运行多个游戏账号。
+**Ark Knight —— Arknights 的谐音，也是字面意思：替博士驻守每个账号夜班的骑士。**
 
-**arkreunion 自身不做任何游戏内图像识别与操作自动化**——账号切换 100% 调用 MAA 官方能力（INV-1）。
+MAA × mower × 多账号 —— 自动上号、基建挂机、到点换人，一个二进制全管。
 
-## 特性
+[安装包](#安装) · [快速开始](#快速开始) · [文档](docs/)
 
-- **多账号轮转**：按时间片与优先级自动排队、占用设备、切号、跑基建、释放
-- **切号防串数据**：MAA 匹配串可能匹配到错误账号（静默、退出码仍为 0），配 `uid` 后切号成功即 OCR 核验登录身份，不符即阻止后续操作
-- **单二进制 + Web 控制台**：控制台 UI 编译期嵌入，`arkreunion server` 即用
-- **配置即事实源**：账号/设备/策略都在工作目录文件树里，可读可版本控制
-- **失败不空转**：指数退避（5m → 60m 封顶）+ 双超时 + 看门狗
+</div>
 
-## 依赖
+---
 
-adb（platform-tools）、[maa-cli](https://github.com/MaaAssistantArknights/maa-cli) + MaaCore、Python 3.11+、[arknights-mower](https://github.com/ArkMowers/arknights-mower) alpha 检出。`arkreunion doctor` 逐项体检。
+**arkknight** 是一个跨平台的明日方舟**多账号编排器**：
+在少量安卓设备（redroid / MuMu / 雷电 / 物理机）上，按你设定的时间窗自动轮转多个游戏账号——
+自动上号（MAA 官方切号 + UID 核验防串号）→ 基建挂机（mower）→ 到点下号换人。
 
-## 安装
+它自身不做任何游戏内图像识别与操作；账号切换 100% 调用 MAA 官方能力。
+命名致敬《杀手机器人日记》：一个安静值守、自己安排排班的机器人单位。
 
-```bash
-# 从 Release 下载解压（三平台安装包 + deb + Arch 包），或源码安装：
-cd arkreunion && cd ui && npm ci && npm run build && cd ..   # 必须：UI 在编译期嵌入
-cargo install --path crates/arkreunion
-```
+## 它能做什么
 
-详见 [`docs/user/install.md`](docs/user/install.md)。
+| | |
+|---|---|
+| 🔄 **多账号轮转** | 时间窗 + 优先级 + 时间片调度；双超时（时间片/硬上限）兜底 |
+| 🛡️ **切号防串号** | MAA 官方 `account_name` 切号，切号后 OCR 核验 UID——不对不上号 |
+| 🏭 **基建挂机** | mower 会话化：Docker / 本地进程双 Runner，Web UI 深链直达，改动实时持久化 |
+| 🖥️ **内嵌控制台** | 单二进制自带 Web 控制台：总览 / 会话 / 日志实时 / 账号 / 设备 / doctor 体检 |
+| 📦 **六平台分发** | Linux x86_64+ARM64（tar.gz / deb / Arch）、Windows、macOS Intel+Apple Silicon、Gentoo overlay |
+
+调度器自带看门狗（执行器失联自动收尾）与指数退避（失败不空转）；所有状态迁移入库可追溯。
 
 ## 快速开始
 
 ```bash
-arkreunion init --dir ~/arkreunion && cd ~/arkreunion
-arkreunion doctor                                    # 环境体检
+# 1) 安装：从 Release 下载对应平台包解压，或源码安装
+cargo install --git https://github.com/Lax/arkknight
 
-arkreunion device add redroid-main --host-adb 127.0.0.1:2771
-arkreunion device test redroid-main
-arkreunion account add main --server official \
-    --account-name '123****8901' --uid 1000123456
+# 2) 初始化工作目录（自动探测 adb / maa / mower / docker）
+arkknight init --dir ~/arkknight
 
-arkreunion provision main      # 人工登录一次（切号前提，MAA 只能选已登录过的账号）
-arkreunion switch main         # 验证切号
-arkreunion server --open       # 常驻调度 + Web 控制台 http://127.0.0.1:7100
+# 3) 注册设备与账号
+arkknight device add redroid-main --host-adb 127.0.0.1:2771 --docker-adb arknights:5555
+arkknight account add main --server official --account-name '123****8901' --uid '123456789'
+arkknight provision main --device redroid-main   # 人工登录一次（切号前提）
+
+# 4) 验证切号，然后交给调度器
+arkknight switch main
+arkknight server                                 # daemon + 控制台 http://127.0.0.1:7100
 ```
 
-四个标识字段别混：`key`（本地定位键）· `display_name`（展示）· `account_name`（切号匹配串）· `uid`（游戏身份核验）。
-
-完整版见 [`docs/user/quickstart.md`](docs/user/quickstart.md)。
+之后调度器按时间窗自动轮转：到点切号 → 跑基建 → 时间片到期优雅下号 → 下一个账号。
 
 ## 文档
 
-| 目录 | 读者 | 入口 |
-|---|---|---|
-| [`docs/`](docs/README.md) | 文档中心（按受众索引） | [arkreunion-design.md](docs/arkreunion-design.md) 是**唯一权威设计** |
-| [`docs/user/`](docs/user/README.md) | 最终用户 | [install](docs/user/install.md) · [quickstart](docs/user/quickstart.md) · [config](docs/user/config.md) · [console](docs/user/console.md) · [faq](docs/user/faq.md) |
-| [`docs/dev/`](docs/dev/README.md) | 开发者 | [api](docs/dev/api.md) · [testing](docs/dev/testing.md) · [release](docs/dev/release.md) |
-| [`docs/ai/`](docs/ai/AGENTS.md) | AI 协作者 / 新开发者 | [AGENTS.md](docs/ai/AGENTS.md) · [ADR](docs/ai/adr/) |
+| 文档 | 内容 |
+|---|---|
+| [总设计](docs/arkknight-design.md) | 架构 / 域模型 / 调度器 / 发布物（权威参考） |
+| [发布流程](docs/dev/release.md) | 六平台安装包流水线 |
+| [AI 协作规范](docs/ai/AGENTS.md) | 硬性不变量（INV-1~4）与代码地图 |
 
-## 当前状态
+## 风险须知
 
-🚧 开发中（M1 里程碑）。**已实现**：调度器（时间片轮转/优先级/退避/看门狗）、账号切换（INV-1 唯一路径）、UID 核验防串数据、provision、mower ProcessRunner 会话、Web 控制台七页、设备截图、三平台发布流水线。
-
-**未做**：mower DockerRunner、RedroidDocker 设备后端（多设备池 M2）、`export`/`import`、OpenAPI、统计页、调度策略表单编辑、72h 真机验收。
-
-完整的已实现/未做清单见 [AGENTS.md](docs/ai/AGENTS.md) 的状态段；命令可用性见 [`docs/dev/api.md`](docs/dev/api.md)。
-
-> ⚠️ 使用自动化工具的风险由用户自担；请勿用于代练等商业用途。账号共享/自动化可能违反游戏用户协议。
+自动化工具请自行确认符合游戏用户协议；多账号行为的风险由使用者自担。
+本项目遵守诚实原则：**不提供任何行为伪装**，也不内置任何游戏内图像识别与操作自动化（切号与任务均由 MAA 官方能力完成）。
 
 ## License
 

@@ -1,18 +1,18 @@
-// arkreunion API 客户端：token 存 localStorage（控制台设置区可改），经 Bearer 头发送
+// arkknight API 客户端：token 存 localStorage（控制台设置区可改），经 Bearer 头发送
 export function getToken(): string {
-  const stored = localStorage.getItem('arkreunion-token') ?? ''
+  const stored = localStorage.getItem('arkknight-token') ?? ''
   if (stored) return stored
   // 首次用 http://host:port/?token=xxx 打开时，URL 参数落到 localStorage 供后续请求用
   const fromUrl = new URLSearchParams(location.search).get('token') ?? ''
   if (fromUrl) {
-    localStorage.setItem('arkreunion-token', fromUrl)
+    localStorage.setItem('arkknight-token', fromUrl)
     return fromUrl
   }
   return ''
 }
 
 export function setToken(t: string): void {
-  localStorage.setItem('arkreunion-token', t)
+  localStorage.setItem('arkknight-token', t)
 }
 
 async function req(method: string, path: string, body?: unknown): Promise<unknown> {
@@ -33,7 +33,7 @@ async function req(method: string, path: string, body?: unknown): Promise<unknow
     }
     // 401 单独标记：控制台据此在侧栏提示「token 不对」，而非每个页面各弹一次
     if (res.status === 401) {
-      localStorage.setItem('arkreunion-auth-failed', '1')
+      localStorage.setItem('arkknight-auth-failed', '1')
     }
     // 服务端错误带 hint 时一并抛出：hint 说明「去哪里改」，比裸 error 更可操作
     const parts = [data.error ?? `HTTP ${res.status}`]

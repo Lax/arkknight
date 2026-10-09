@@ -1,22 +1,22 @@
-# arkreunion 开发者文档
+# arkknight 开发者文档
 
 面向为本项目贡献代码的人类开发者与 AI 协作者（AI 协作者请先读 [`../ai/AGENTS.md`](../ai/AGENTS.md)）。
 
 ## 必读
 
-1. [总体设计 `arkreunion-design.md`](../arkreunion-design.md) —— 唯一权威设计：架构、域模型、状态机、API、里程碑
+1. [总体设计 `arkknight-design.md`](../arkknight-design.md) —— 唯一权威设计：架构、域模型、状态机、API、里程碑
 2. [ADR 目录 `../ai/adr/`](../ai/adr/) —— 架构决策及其理由；新决策先写 ADR（模板见下）
 3. [`../ai/AGENTS.md`](../ai/AGENTS.md) —— 代码地图、命名约定、硬性不变量、修改热点、常见坑
 
 ## 快速上手
 
 ```bash
-# 后端（Rust workspace：crates/arkreunion-core + crates/arkreunion）
+# 后端（Rust workspace：crates/arkknight-core + crates/arkknight）
 cargo build --release               # 发布构建（UI 在此阶段嵌入）
 cargo test --workspace              # 全量：单测 + golden + 调度场景 + server 测试
 cargo clippy --workspace --all-targets -- -D warnings   # 零告警是硬约定
 cargo fmt
-cargo run -p arkreunion -- init --dir /tmp/arkreunion-demo   # 体验 CLI
+cargo run -p arkknight -- init --dir /tmp/arkknight-demo   # 体验 CLI
 
 # 前端（ui/，构建产物经 rust-embed 嵌入二进制）
 cd ui && npm ci && npm run build   # vue-tsc 类型检查 + vite build
@@ -25,9 +25,9 @@ cd ui && npm ci && npm run build   # vue-tsc 类型检查 + vite build
 > ⚠️ **release 构建必须先有 `ui/dist`**，否则 `rust-embed` 编译期嵌入失败。
 > 这是特性：保证发布物一定带最新控制台。改前端后记得 `npm run build`。
 
-冒烟（对真实环境）：`arkreunion init` → `arkreunion device add <name> --host-adb <addr>` →
-`arkreunion device test <name>` → `arkreunion account add <key> --server official --account-name '138****0000' --uid <uid>` →
-`arkreunion provision <key>` → `arkreunion switch <key>` → `arkreunion server --open`。
+冒烟（对真实环境）：`arkknight init` → `arkknight device add <name> --host-adb <addr>` →
+`arkknight device test <name>` → `arkknight account add <key> --server official --account-name '138****0000' --uid <uid>` →
+`arkknight provision <key>` → `arkknight switch <key>` → `arkknight server --open`。
 
 ## 文档
 
@@ -64,17 +64,17 @@ cd ui && npm ci && npm run build   # vue-tsc 类型检查 + vite build
 
 ## 本机实机验证栈
 
-`/srv/reunion` —— docker compose 部署（redroid 2781 + arkreunion + mower），
+`/srv/reunion` —— docker compose 部署（redroid 2781 + arkknight + mower），
 配置独立且 git 管理（明文凭据拆分后不入库）。用它做真机验证，
 **不要污染 `/srv/arknights` 既有栈**。
 
 ```bash
 cd /srv/reunion
 docker compose ps
-docker compose logs -f arkreunion
+docker compose logs -f arkknight
 
-ark() { docker compose run --rm --workdir /arkreunion \
-        --entrypoint /usr/local/bin/arkreunion arkreunion "$@"; }
+ark() { docker compose run --rm --workdir /arkknight \
+        --entrypoint /usr/local/bin/arkknight arkknight "$@"; }
 ark doctor
 ark status
 ```
@@ -104,7 +104,7 @@ ark status
 ## 约定速查
 
 - **提交前门禁**：`cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` + `cd ui && npm run build`
-- Conventional Commits；**一个 PR 一件事**；改行为先改 `arkreunion-design.md`
+- Conventional Commits；**一个 PR 一件事**；改行为先改 `arkknight-design.md`
 - 新配置字段三同步：设计文档 §11 schema、[`user/config.md`](../user/config.md)、`golden` 快照
 - 严禁登录界面自研自动化（INV-1，见 AGENTS.md）
 - 错误响应一律带 `hint`（见 [ADR-0006](../ai/adr/0006-错误响应带hint.md)）

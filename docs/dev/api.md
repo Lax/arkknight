@@ -1,12 +1,12 @@
 # API 参考
 
-控制台与 API 的权威路由表在代码里：`crates/arkreunion/src/commands/server.rs` 的
+控制台与 API 的权威路由表在代码里：`crates/arkknight/src/commands/server.rs` 的
 `router()` 函数。本文说明**实际已实现**的路由与约定（设计文档 §13.2 是含未实现项的草案）。
 
 ## 启动
 
 ```bash
-arkreunion server [--port N] [--bind ADDR] [--open]
+arkknight server [--port N] [--bind ADDR] [--open]
 ```
 
 daemon 持有工作目录单写者 flock，REST API 与 WebSocket 同端口。
@@ -32,8 +32,8 @@ Authorization: Bearer <token>
 {
   "error": "token 无效或缺失",
   "detail": "请求未携带 token",
-  "hint": "token 来自工作目录配置 <path>/arkreunion.toml[server].token。修改后需重启 daemon；控制台侧可在左侧「API token」框填写，或用 ?token=<值> 访问 http://127.0.0.1:7100/?token=<值>",
-  "config_path": "<path>/arkreunion.toml"
+  "hint": "token 来自工作目录配置 <path>/arkknight.toml[server].token。修改后需重启 daemon；控制台侧可在左侧「API token」框填写，或用 ?token=<值> 访问 http://127.0.0.1:7100/?token=<值>",
+  "config_path": "<path>/arkknight.toml"
 }
 ```
 
@@ -154,7 +154,7 @@ Authorization: Bearer <token>
 - `POST /api/devices/{name}/watermark`（M2）
 - `/docs` Swagger UI（utoipa 未接入）
 
-需走 daemon API 的能力目前只有 CLI（`arkreunion session start` 等）。
+需走 daemon API 的能力目前只有 CLI（`arkknight session start` 等）。
 
 ## 契约测试
 

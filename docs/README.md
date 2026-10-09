@@ -1,12 +1,12 @@
-# arkreunion 文档中心
+# arkknight 文档中心
 
-方舟多账号调度中心（arkreunion）—— 跨平台编排 MAA 与 mower 的多账号自动化调度器。
+方舟多账号调度中心（arkknight）—— 跨平台编排 MAA 与 mower 的多账号自动化调度器。
 
 ## 按受众
 
 | 受众 | 入口 |
 |---|---|
-| **总设计（权威）** | [`arkreunion-design.md`](./arkreunion-design.md) — 架构、域模型、调度、配置、API、里程碑、风险。**一切行为变更的先行文档** |
+| **总设计（权威）** | [`arkknight-design.md`](./arkknight-design.md) — 架构、域模型、调度、配置、API、里程碑、风险。**一切行为变更的先行文档** |
 | AI 协作者 / 新开发者 | [`ai/AGENTS.md`](./ai/AGENTS.md) — 代码地图、命名约定、硬性不变量、修改热点、常见坑 |
 | 最终用户 | [`user/`](./user/README.md) — 安装 → 快速上手 → 配置 → 控制台 → FAQ |
 
@@ -16,7 +16,7 @@
 |---|---|
 | [`user/install.md`](./user/install.md) | 依赖（adb / MAA / mower / Python）、三种安装方式、Docker 部署要点 |
 | [`user/quickstart.md`](./user/quickstart.md) | 从零跑通：init → doctor → 设备 → 账号 → 人工登录 → 切号 → 会话 → server |
-| [`user/config.md`](./user/config.md) | `arkreunion.toml` / 账号 / 设备全字段，四个标识字段的分工 |
+| [`user/config.md`](./user/config.md) | `arkknight.toml` / 账号 / 设备全字段，四个标识字段的分工 |
 | [`user/console.md`](./user/console.md) | Web 控制台七页、token 设置、截图、错误提示怎么读 |
 | [`user/faq.md`](./user/faq.md) | 切号失败、adb 连不上、白屏、端口冲突、调度不启动、游戏更新 |
 
@@ -44,7 +44,7 @@
 
 ## 文档规则
 
-1. **文档先行**：行为变更先改 `arkreunion-design.md`（或新写 ADR），再改代码。
+1. **文档先行**：行为变更先改 `arkknight-design.md`（或新写 ADR），再改代码。
 2. **三同步**：新增/修改配置字段时，同步更新设计文档 §11、
    [`user/config.md`](./user/config.md)、golden 测试快照。
 3. **单一权威**：同一事实只在一处定义（设计文档），其余引用不复制。

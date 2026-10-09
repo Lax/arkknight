@@ -12,7 +12,7 @@ const route = useRoute()
 const tokenInput = ref(getToken())
 // 401 提示：只认「鉴权失败」，其它业务错误不归咎于 token
 const authFailed = ref(
-  (localStorage.getItem('arkreunion-auth-failed') ?? '0') === '1',
+  (localStorage.getItem('arkknight-auth-failed') ?? '0') === '1',
 )
 
 // 窄屏（<900px）自动收起侧栏，避免菜单挤占内容区导致横向滚动
@@ -60,7 +60,7 @@ const menuOptions: MenuOption[] = [
 
 function saveToken(): void {
   setToken(tokenInput.value.trim())
-  localStorage.removeItem('arkreunion-auth-failed')
+  localStorage.removeItem('arkknight-auth-failed')
   location.reload()
 }
 </script>
@@ -81,7 +81,7 @@ function saveToken(): void {
           @expand="collapsed = false"
         >
           <h2 v-if="!collapsed" style="margin: 4px 8px 14px; font-size: 15px; white-space: nowrap">
-            arkreunion 控制台
+            arkknight 控制台
           </h2>
           <h2 v-else style="margin: 4px 0 14px; text-align: center; font-size: 15px">AR</h2>
           <n-menu :options="menuOptions" :value="String(route.name)" :collapsed="collapsed" />
@@ -101,7 +101,7 @@ function saveToken(): void {
               @keyup.enter="saveToken"
             />
             <span style="font-size: 11px; color: gray; line-height: 1.5">
-              值须与工作目录 arkreunion.toml 的
+              值须与工作目录 arkknight.toml 的
               <code>[server].token</code> 一致，改配置后需重启 daemon
             </span>
             <n-button size="tiny" secondary :disabled="!tokenInput" @click="saveToken">

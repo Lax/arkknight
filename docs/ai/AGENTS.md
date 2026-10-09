@@ -1,13 +1,13 @@
-# AGENTS.md — arkreunion AI 协作规范
+# AGENTS.md — arkknight AI 协作规范
 
-> 本文档面向在 arkreunion 仓库工作的 AI 编程助手（以及新加入的人类开发者）。
+> 本文档面向在 arkknight 仓库工作的 AI 编程助手（以及新加入的人类开发者）。
 > 人类开发者请同时阅读 `docs/dev/README.md`；最终用户文档在 `docs/user/`。
 
 ## 项目是什么
 
-arkreunion 是一个跨平台（Linux/Windows/macOS）的明日方舟**多账号编排器**：编排 MAA（账号切换/任务）与 mower（基建排班）等执行器，在少量安卓设备（redroid/原生模拟器）上自动轮转运行多个游戏账号。**它自己不做任何游戏内图像识别与操作自动化。**
+arkknight 是一个跨平台（Linux/Windows/macOS）的明日方舟**多账号编排器**：编排 MAA（账号切换/任务）与 mower（基建排班）等执行器，在少量安卓设备（redroid/原生模拟器）上自动轮转运行多个游戏账号。**它自己不做任何游戏内图像识别与操作自动化。**
 
-- 总体设计（必读）：[`docs/arkreunion-design.md`](../arkreunion-design.md)
+- 总体设计（必读）：[`docs/arkknight-design.md`](../arkknight-design.md)
 - 架构决策与理由：[`adr/`](./adr/)（改动架构前先读相关 ADR；新决策先写 ADR）
 
 ## 命名约定（易错，先读）
@@ -30,9 +30,9 @@ serde `alias = "id"` 兼容旧文件；SQLite 列名同步 v1→v2）。
 ## 代码地图（随实现更新）
 
 ```
-crates/arkreunion-core/      库：领域模型/配置/物化/调度器/执行器/设备后端/持久化
+crates/arkknight-core/      库：领域模型/配置/物化/调度器/执行器/设备后端/持久化
   src/model/            Account, Device, Session, SchedulePolicy（见设计文档 §6）
-  src/config/           arkreunion.toml、工作目录布局、环境探测
+  src/config/           arkknight.toml、工作目录布局、环境探测
   src/materialize/      MAA TOML 与 mower conf.yml 的物化与白名单 patch（§11）
   src/device/           DeviceBackend trait + external/（+ redroid/ M2）
   src/executor/         Executor trait + maa/ + mower/（ProcessRunner；DockerRunner 未做）
@@ -40,7 +40,7 @@ crates/arkreunion-core/      库：领域模型/配置/物化/调度器/执行�
   src/switch/           账号切换的唯一实现入口（§9，受 INV-1 约束）
   src/store/            SQLite(rusqlite, WAL) + schema v1→v2 迁移
   src/doctor/           环境体检
-crates/arkreunion/           CLI(clap) + axum server + rust-embed 前端
+crates/arkknight/           CLI(clap) + axum server + rust-embed 前端
   src/commands/         各子命令；server.rs 内含 Router + 鉴权 + WS + API 测试
 ui/                     Vue3 + Vite + Naive UI 控制台源码
 docs/                   本文档树
@@ -101,7 +101,7 @@ docs/                   本文档树
 - Rust：`cargo fmt` + `cargo clippy --workspace --all-targets -- -D warnings` 零告警；
   公共 API 写 doc comment 与示例。
 - 提交信息：Conventional Commits（`feat(scheduler): ...`）；**一个 PR 一件事**。
-- 新增配置字段：同步更新 `arkreunion-design.md` §11 schema、`user/config.md`、golden 快照。
+- 新增配置字段：同步更新 `arkknight-design.md` §11 schema、`user/config.md`、golden 快照。
 - 涉及密钥的测试/夹具一律用假值；**永不**把真实 `account_name`/凭据写进仓库。
 - 提交前门禁：`cargo fmt && cargo clippy ... -D warnings && cargo test --workspace`
   + `cd ui && npm run build`（含 vue-tsc）。
@@ -131,8 +131,8 @@ docs/                   本文档树
 改动必须更新 golden 快照：
 
 ```bash
-ARKREUNION_UPDATE_GOLDEN=1 cargo test -p arkreunion-core --test golden
-git diff crates/arkreunion-core/tests/golden/    # 人工确认只动了白名单字段
+ARKKNIGHT_UPDATE_GOLDEN=1 cargo test -p arkknight-core --test golden
+git diff crates/arkknight-core/tests/golden/    # 人工确认只动了白名单字段
 ```
 
 mower `conf.yml` 的白名单只有 4 个字段：`adb` / `webview.port` /
@@ -159,7 +159,7 @@ cd ui && npm run build    # vue-tsc 类型检查 + vite build
   游戏账号信息在 `skland_info` 与 MAA 侧。
 - adb 地址有**双形态**：宿主端口（`127.0.0.1:2771`）与容器网络（`arknights:5555`）。
   物化时按 Runner 形态选择，**写错是高频 bug**。
-  arkreunion 自身在容器里时 `host_adb` 也要填容器网络地址（`127.0.0.1` 指向容器自身）。
+  arkknight 自身在容器里时 `host_adb` 也要填容器网络地址（`127.0.0.1` 指向容器自身）。
 - mower 数据根由 `MOWER_DATA_DIR` 决定（ProcessRunner 依赖）；DockerRunner 则直接挂载 `/mower/config`。
 - 游戏日界是**官服 UTC-4 的 04:00**，不要按本地零点写时间窗逻辑。
 - mower alpha 分支会动配置 schema（如 device 段迁移），更新 mower 后先跑 `doctor`。
@@ -170,8 +170,8 @@ cd ui && npm run build    # vue-tsc 类型检查 + vite build
 
 ## AI 协作流程建议
 
-1. 动手前：读 `arkreunion-design.md` 对应章节 + 相关 ADR + 邻近模块代码。
-2. 不确定的设计点：查 `arkreunion-design.md` §22 开放问题；仍未覆盖则**停下提问**，
+1. 动手前：读 `arkknight-design.md` 对应章节 + 相关 ADR + 邻近模块代码。
+2. 不确定的设计点：查 `arkknight-design.md` §22 开放问题；仍未覆盖则**停下提问**，
    不要自行发明架构。
 3. 改字段名/配置项：同步「模型 → store → CLI → API → 前端 → 设计文档 → 用户配置手册」
    全链路，并确认是否需要 schema 迁移。
@@ -179,13 +179,13 @@ cd ui && npm run build    # vue-tsc 类型检查 + vite build
 
 ## 本机部署栈（实机验证用）
 
-`/srv/reunion` —— docker compose 部署（redroid 2781 + arkreunion + mower），配置独立且
+`/srv/reunion` —— docker compose 部署（redroid 2781 + arkknight + mower），配置独立且
 git 管理（明文凭据拆分不入库）。用它做真机验证，不要污染 `/srv/arknights` 既有栈。
 
 ```bash
 cd /srv/reunion && docker compose ps
-ark() { docker compose run --rm --workdir /arkreunion \
-        --entrypoint /usr/local/bin/arkreunion arkreunion "$@"; }
+ark() { docker compose run --rm --workdir /arkknight \
+        --entrypoint /usr/local/bin/arkknight arkknight "$@"; }
 ark doctor
 ```
 

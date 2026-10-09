@@ -85,7 +85,7 @@ onBeforeUnmount(() => {
       <n-empty v-if="!devices.length" description="未注册设备">
         <template #extra>
           <n-text depth="3" style="font-size: 12px">
-            CLI：arkreunion device add &lt;name&gt; --host-adb &lt;宿主adb地址&gt;
+            CLI：arkknight device add &lt;name&gt; --host-adb &lt;宿主adb地址&gt;
           </n-text>
         </template>
       </n-empty>

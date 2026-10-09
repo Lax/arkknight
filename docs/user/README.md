@@ -1,8 +1,8 @@
-# arkreunion 用户文档
+# arkknight 用户文档
 
-面向部署与使用 arkreunion 的最终用户。
+面向部署与使用 arkknight 的最终用户。
 
-## arkreunion 是什么
+## arkknight 是什么
 
 一个跨平台（Linux / Windows / macOS）的明日方舟多账号调度中心：在一台（或按需多台）安卓模拟器设备上自动切换并轮转运行多个游戏账号，账号切换由 MAA 官方能力完成，基建排班由 mower 完成。
 
@@ -14,11 +14,11 @@
 |---|---|
 | [`install.md`](./install.md) | 依赖（adb / MAA / mower / Python）、三种安装方式、Docker 部署要点 |
 | [`quickstart.md`](./quickstart.md) | 从零跑通：init → doctor → 设备 → 账号 → 人工登录 → 切号 → 会话 → server |
-| [`config.md`](./config.md) | `arkreunion.toml` / 账号 / 设备全字段、四个标识字段的分工、环境变量 |
+| [`config.md`](./config.md) | `arkknight.toml` / 账号 / 设备全字段、四个标识字段的分工、环境变量 |
 | [`console.md`](./console.md) | Web 控制台七页、token 设置、截图、错误提示怎么读 |
 | [`faq.md`](./faq.md) | 切号失败、adb 连不上、白屏、端口冲突、调度不启动、游戏更新 |
 
-配置字段的**权威定义**在 [`../arkreunion-design.md` §11](../arkreunion-design.md)；
+配置字段的**权威定义**在 [`../arkknight-design.md` §11](../arkknight-design.md)；
 本文补充面向使用者的解读与陷阱说明。
 
 ## 核心概念
@@ -31,7 +31,7 @@
 | **切号（switch）** | 由 MAA「开始唤醒」在登录界面自动完成。账号需在该设备登录过一次 |
 | **预置（provision）** | 每账号每设备一次性的人工登录引导，之后才能自动切号 |
 | **会话（session）** | 「占用设备 → 切号 → 运行 mower/MAA → 释放」的完整过程。多账号按时间片轮转 |
-| **工作目录（workdir）** | 所有状态所在：`arkreunion.toml` + `devices/` + `accounts/` + `state/` + `logs/` |
+| **工作目录（workdir）** | 所有状态所在：`arkknight.toml` + `devices/` + `accounts/` + `state/` + `logs/` |
 
 ## 四个标识字段别混
 
@@ -49,14 +49,14 @@
 ## 最短路径
 
 ```bash
-arkreunion init --dir ~/arkreunion && cd ~/arkreunion
-arkreunion doctor
-arkreunion device add redroid-main --host-adb 127.0.0.1:2771
-arkreunion device test redroid-main
-arkreunion account add main --server official --account-name '123****8901' --uid 1000123456
-arkreunion provision main        # 人工登录一次（切号前提）
-arkreunion switch main           # 验证
-arkreunion server --open         # 常驻调度 + 控制台
+arkknight init --dir ~/arkknight && cd ~/arkknight
+arkknight doctor
+arkknight device add redroid-main --host-adb 127.0.0.1:2771
+arkknight device test redroid-main
+arkknight account add main --server official --account-name '123****8901' --uid 1000123456
+arkknight provision main        # 人工登录一次（切号前提）
+arkknight switch main           # 验证
+arkknight server --open         # 常驻调度 + 控制台
 ```
 
 完整版见 [`quickstart.md`](./quickstart.md)。

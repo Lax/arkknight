@@ -1,7 +1,7 @@
 # Web 控制台
 
 ```bash
-arkreunion server --open
+arkknight server --open
 ```
 
 访问 <http://127.0.0.1:7100>（配了 token 则用 `?token=<值>` 首访，前端会存入 localStorage）。
@@ -24,7 +24,7 @@ arkreunion server --open
 
 左下角侧栏「API token」。
 
-值须与 `arkreunion.toml` 的 `[server].token` **一致**。改配置后需重启 daemon，
+值须与 `arkknight.toml` 的 `[server].token` **一致**。改配置后需重启 daemon，
 再回控制台填入并「保存并刷新」。
 
 - 首次用 `?token=<值>` 访问时，前端自动把 URL 参数落到 localStorage
@@ -67,7 +67,7 @@ arkreunion server --open
 ## 维护页（doctor）
 
 点「运行体检」执行完整环境体检，逐项显示 `✓`/`!`/`✗` 与 `↳` 修复提示。
-与 CLI 的 `arkreunion doctor` 等价。
+与 CLI 的 `arkknight doctor` 等价。
 
 ## WebSocket
 
@@ -85,7 +85,7 @@ arkreunion server --open
 ```json
 {
   "error": "账号 ghost 不存在",
-  "hint": "账号不存在。已注册：main、alt；新增用 `arkreunion account add <key> --server official --account-name '<匹配串>'`"
+  "hint": "账号不存在。已注册：main、alt；新增用 `arkknight account add <key> --server official --account-name '<匹配串>'`"
 }
 ```
 

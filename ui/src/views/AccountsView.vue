@@ -318,7 +318,7 @@ onMounted(refresh)
           <n-button type="primary" :loading="creating" @click="create">创建</n-button>
           <n-button @click="showCreate = false">取消</n-button>
           <n-text depth="3" style="font-size: 12px">
-            创建后需在设备上人工登录一次（CLI：arkreunion provision &lt;id&gt;）
+            创建后需在设备上人工登录一次（CLI：arkknight provision &lt;id&gt;）
           </n-text>
         </n-space>
       </n-form>
