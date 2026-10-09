@@ -52,12 +52,17 @@ arkknight server                                 # daemon + 控制台 http://127
 
 之后调度器按时间窗自动轮转：到点切号 → 跑基建 → 时间片到期优雅下号 → 下一个账号。
 
+mower 会话默认以本地进程运行（ProcessRunner）；装了 Docker 可切 `schedule.runner = "docker"`
+（会话容器起停，bundle 直挂载，见 [DockerRunner 指南](docs/dev/docker-runner.md)）；
+`arkknight mower update / rollback` 管理 mower 检出版本。
+
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [总设计](docs/arkknight-design.md) | 架构 / 域模型 / 调度器 / 发布物（权威参考） |
 | [发布流程](docs/dev/release.md) | 六平台安装包流水线 |
+| [DockerRunner](docs/dev/docker-runner.md) | mower 会话容器化 + socket-proxy 部署 |
 | [AI 协作规范](docs/ai/AGENTS.md) | 硬性不变量（INV-1~4）与代码地图 |
 
 ## 风险须知
