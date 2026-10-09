@@ -1,8 +1,8 @@
-# 技术调研：Android 设备侧 Agent 方案（akops 编排服务层）
+# 技术调研：Android 设备侧 Agent 方案（arkreunion 编排服务层）
 
-> 2026-10-09 · 状态：**调研完成，待决策**（是否立项自研 akops-agent）
+> 2026-10-09 · 状态：**调研完成，待决策**（是否立项自研 arkreunion-agent）
 > 动机：像 mower 推送 scrcpy-server/MaaTouch/DroidCast 那样，把编排所需的服务装进 Android，
-> 使 akops 的会话守护/设备指标/装包能力不依赖「能改镜像」（watchdog 现在只能注入自制 redroid 镜像，
+> 使 arkreunion 的会话守护/设备指标/装包能力不依赖「能改镜像」（watchdog 现在只能注入自制 redroid 镜像，
 > MuMu/雷电/BlueStacks 等第三方模拟器上缺失）。
 
 ## 一、业界设备侧 Agent 模式盘点
@@ -11,9 +11,9 @@
 `app_process`（Java/dex）或直接 exec（native 静态二进制）以 shell uid 启动 → 通过本地 socket /
 adb forward|reverse 暴露服务 → 主机消费。无需 root；个别厂商 ROM 的 SELinux 策略是主要变数。
 
-| 方案 | 形态 | 能力 | 现状（2025-2026） | 对 akops 的适用性 |
+| 方案 | 形态 | 能力 | 现状（2025-2026） | 对 arkreunion 的适用性 |
 |---|---|---|---|---|
-| scrcpy-server | jar via app_process | 视频（H.264/AV1）+ 控制注入 | Genymobile 持续维护，Apache-2.0 | 控制面属执行器领域；akops 不碰 |
+| scrcpy-server | jar via app_process | 视频（H.264/AV1）+ 控制注入 | Genymobile 持续维护，Apache-2.0 | 控制面属执行器领域；arkreunion 不碰 |
 | MaaTouch | native 二进制 | 多点触控注入 | MAA 内置分发 | 同上（mower 已用作触控后端） |
 | DroidCast | APK（mower 经 `CLASSPATH=<apk> app_process` 直跑 `Main` 类 + adb forward；上游亦支持 am broadcast） | PNG 截图流 | mower 内置 vendor（1.3.0，SHA-256 校验锚定上游 commit c779c66） | **可复用**：控制台设备画面（可选）。⚠️ 实证副作用：清单含 `LAUNCHER`+`MainActivity`，安装后在模拟器桌面留下 "DroidCast" 图标且 mower 从不卸载（`com.rayworks.droidcast`，仅当 `screenshot_backend == "droidcast"` 时安装） |
 | atx-agent / uiautomator2 | Go 二进制 + UiAutomator HTTP | UI 自动化全家桶 | uiautomator2 3.x 已转向 appium 风格 server，atx-agent 事实遗留；ABI 兼容历史问题多 | 不复用（功能越界 + 维护风险） |
@@ -29,10 +29,10 @@ adb forward|reverse 暴露服务 → 主机消费。无需 root；个别厂商 R
    `bluestacks_air/discovery`、`genymotion.py`、`avd.py`
 3. **兜底**：`adb_client`（`screencap -p` / `input`）
 
-**akops 学什么**：跨模拟器的服务统一靠「推 agent」；哪台设备用哪条通道由能力探测决定，永远有
-adb 兜底。**不学什么**：厂商深度适配矩阵是执行器（mower/MAA）的领域，akops 不背。
+**arkreunion 学什么**：跨模拟器的服务统一靠「推 agent」；哪台设备用哪条通道由能力探测决定，永远有
+adb 兜底。**不学什么**：厂商深度适配矩阵是执行器（mower/MAA）的领域，arkreunion 不背。
 
-## 三、akops 的真实痛点与 agent 能力清单（按价值排序）
+## 三、arkreunion 的真实痛点与 agent 能力清单（按价值排序）
 
 | # | 痛点 | agent 能力 | 价值 |
 |---|---|---|---|
@@ -60,18 +60,18 @@ adb 兜底。**不学什么**：厂商深度适配矩阵是执行器（mower/MAA
   前台服务 + BOOT_COMPLETED 是标准解；固定自签签名避免 DroidCast 式签名冲突
 - **C** 仅当把「桌面可见的守护状态」当 feature（可点开看状态/停止）
 - **透明度约束（替代无痕禁令）**：无论何种形态，`doctor`/`status` 必须如实报告 agent 的
-  存在/版本/运行态，并提供显式卸载命令；**无痕 ≠ 反检测**——akops 不做行为伪装（R4 诚实原则），
+  存在/版本/运行态，并提供显式卸载命令；**无痕 ≠ 反检测**——arkreunion 不做行为伪装（R4 诚实原则），
   无痕仅指不占用户桌面、应用列表状态如实可控
 
-自研 `akops-agent` v0（建议 Go：`GOOS=android` 免 cgo 交叉编译 arm64/x86_64 最省事；Rust+NDK 亦可）：
+自研 `arkreunion-agent` v0（建议 Go：`GOOS=android` 免 cgo 交叉编译 arm64/x86_64 最省事；Rust+NDK 亦可）：
 - 功能面：`POST /heartbeat`、`GET /metrics`、`POST /app/install|launch|force-stop`、
   watchdog 守护模式、崩溃日志拉取；HTTP 绑定设备内 localhost，经 `adb forward` 暴露宿主
-- 体积目标 <5MB/ABI；版本握手（akops ↔ agent），mismatch 自动重推（吸取 atx-agent「recover failed」教训）
+- 体积目标 <5MB/ABI；版本握手（arkreunion ↔ agent），mismatch 自动重推（吸取 atx-agent「recover failed」教训）
 - 部署形态：redroid 可烘焙 init.rc 自启（替代 watchdog bind hack）；其他设备每次会话经 adb 启动
 
 ## 五、架构落点（INV-3 兼容）
 
-- `akops-core/src/agent/`：`DeviceAgent` trait（deploy/heartbeat/metrics/app_ops/watchdog）
+- `arkreunion-core/src/agent/`：`DeviceAgent` trait（deploy/heartbeat/metrics/app_ops/watchdog）
 - `DeviceBackend` 挂可选能力；`devices/<name>.toml` 增 `agent = true|false`（默认 false）
 - **纯 adb 永远是默认与降级路径**——agent 缺席时所有功能降级（watchdog 不可用→仅 redroid、
   指标→dumpsys 轮询），不引入新的失败模式
@@ -88,5 +88,5 @@ adb 兜底。**不学什么**：厂商深度适配矩阵是执行器（mower/MAA
 
 - **Phase A（低成本 spike，可并入 M2）**：纯 adb `dumpsys` 指标轮询 + 可选 DroidCast 设备画面，
   验证控制台/水位对指标的真实需求
-- **Phase B**：akops-agent v0（心跳/指标/watchdog 守护），redroid + 一个第三方模拟器（如 MuMu）双端验证
+- **Phase B**：arkreunion-agent v0（心跳/指标/watchdog 守护），redroid + 一个第三方模拟器（如 MuMu）双端验证
 - **Phase C（可选）**：装包流水线接 agent、DroidCast 画面整合进控制台

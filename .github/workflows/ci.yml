@@ -8,7 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   #golden 快照为平台无关生成内容；CI 不改快照，只比对
-  AKOPS_UPDATE_GOLDEN: 0
+  ARKREUNION_UPDATE_GOLDEN: 0
 
 jobs:
   rust:

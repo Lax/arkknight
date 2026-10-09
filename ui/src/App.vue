@@ -32,7 +32,7 @@ function saveToken(): void {
     <n-message-provider>
       <n-layout has-sider style="height: 100vh">
         <n-layout-sider bordered content-style="padding: 12px" :width="210">
-          <h2 style="margin: 4px 8px 14px">akops 控制台</h2>
+          <h2 style="margin: 4px 8px 14px">arkreunion 控制台</h2>
           <n-menu :options="menuOptions" :value="String(route.name)" />
           <n-space vertical style="margin-top: 18px; padding: 0 8px" size="small">
             <span style="font-size: 12px; color: gray">API token</span>

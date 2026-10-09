@@ -40,7 +40,7 @@ onMounted(refresh)
 <template>
   <n-card title="设备管理" size="small">
     <n-space vertical>
-      <n-tag v-if="!devices.length" type="default">未注册设备（CLI：akops device add）</n-tag>
+      <n-tag v-if="!devices.length" type="default">未注册设备（CLI：arkreunion device add）</n-tag>
       <div v-for="d in devices" :key="d.name" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
         <n-tag size="small" :type="d.backend === 'external' ? 'info' : 'warning'">{{ d.backend }}</n-tag>
         <n-text strong>{{ d.name }}</n-text>

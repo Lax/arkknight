@@ -1,10 +1,10 @@
-// akops API 客户端：token 存 localStorage（控制台设置区可改），经 Bearer 头发送
+// arkreunion API 客户端：token 存 localStorage（控制台设置区可改），经 Bearer 头发送
 export function getToken(): string {
-  return localStorage.getItem('akops-token') ?? ''
+  return localStorage.getItem('arkreunion-token') ?? ''
 }
 
 export function setToken(t: string): void {
-  localStorage.setItem('akops-token', t)
+  localStorage.setItem('arkreunion-token', t)
 }
 
 async function req(method: string, path: string, body?: unknown): Promise<unknown> {

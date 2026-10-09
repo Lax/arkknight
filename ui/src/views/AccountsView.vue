@@ -143,7 +143,7 @@ onMounted(refresh)
       <n-space>
         <n-button type="primary" :loading="creating" @click="create">创建</n-button>
         <n-button @click="showCreate = false">取消</n-button>
-        <n-text depth="3">创建后需在设备上人工登录一次（CLI：akops provision），切号串须全局唯一</n-text>
+        <n-text depth="3">创建后需在设备上人工登录一次（CLI：arkreunion provision），切号串须全局唯一</n-text>
       </n-space>
     </n-card>
   </n-space>

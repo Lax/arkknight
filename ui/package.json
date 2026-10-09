@@ -1,9 +1,9 @@
 {
-  "name": "akops-ui",
+  "name": "arkreunion-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "akops Web 控制台（构建产物由 rust-embed 嵌入 akops 二进制）",
+  "description": "arkreunion Web 控制台（构建产物由 rust-embed 嵌入 arkreunion 二进制）",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",

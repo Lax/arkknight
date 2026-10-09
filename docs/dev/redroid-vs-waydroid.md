@@ -3,7 +3,7 @@
 > 2026-10-09 · 结论见 [ADR-0003](../ai/adr/0003-模拟器池化后端维持redroid.md)：**维持 redroid，waydroid 否决**。
 > 本文档保留完整对比矩阵与实测数据，供复评时使用。
 
-## 评估场景（akops M2）
+## 评估场景（arkreunion M2）
 
 - headless Linux 服务器，MAA/mower 经 adb 驱动游戏（无人工交互）
 - 实例池按水位动态扩缩（目标 3+ 实例），bollard 编排
@@ -34,7 +34,7 @@
 - 镜像分层：base 5.25GB → update 20.5GB → 带 tag 快照 35.6-35.9GB；未卷化教训 `2761-pre-vol` 66.8GB
 - APK：官方链 302 → launcher API → CDN 直链 `arknights-hg-2781.apk`（1.73GB）；HEAD 405 须 GET；文件名含版本号
 
-## APK 升级流水线（手动触发，M2 `akops device upgrade-image`）
+## APK 升级流水线（手动触发，M2 `arkreunion device upgrade-image`）
 
 1. 避让活跃会话（`device_leases` 检查）
 2. base 镜像起 staging 容器（空数据卷）
