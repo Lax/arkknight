@@ -45,6 +45,22 @@ External 后端（MuMu/雷电）承接，与本 ADR 无冲突。
 
 ## 后果
 
+### Android 11 数据权限豁免是 base 镜像的承载性资产（2026-10-09 事实核查）
+
+waydroid_script 的 nodataperm hack（应用启动置 `persist.sys.nodataperm` → 数据目录 777）
+针对的 Android 11 数据权限 bug 同样适用于 redroid——且**本项目的 base redroid 11 镜像出厂
+已内置等价豁免**：`getenforce=Disabled`、整棵 `/data/data` 的 SELinux 上下文标记为
+`HACKED`（镜像构建者的豁免标记，非本项目工具链所为）。实测该部署 4 周零 crash_events、
+FUSE 共享存储属主正常（u0_a129+ext_data_rw）。
+
+因此：
+- **镜像升级流水线（§12）必须以「自带数据权限豁免的镜像」为 base**，不可换用裸
+  redroid 11 镜像，否则复现应用黑屏/冻结（明日方舟为 README 点名受影响应用）
+- `doctor` 增加检查项：`getenforce` 状态、抽查 `/data/data` 的 HACKED 豁免标记
+- 历史症状（重启/重置/资源重下）与两因素吻合：未豁免期的黑屏冻结 + 数据卷化之前
+  的镜像重建擦除数据（2761-pre-vol 时代）；现部署已由豁免+卷化+watchdog 消除
+
+
 - ✅ 与现有部署资产（redroid-script、watchdog、镜像约定、双实例）零迁移成本。
 - ✅ doctor 待增检查项：宿主 `binder_linux` 模块、磁盘水位（update 镜像 20-36GB/个）。
 - ⚠️ redroid 宿主内核升级后需重载 binder 模块（Android 15/16 镜像对此更敏感，issue #865）。
