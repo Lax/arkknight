@@ -15,7 +15,7 @@ adb forward|reverse 暴露服务 → 主机消费。无需 root；个别厂商 R
 |---|---|---|---|---|
 | scrcpy-server | jar via app_process | 视频（H.264/AV1）+ 控制注入 | Genymobile 持续维护，Apache-2.0 | 控制面属执行器领域；akops 不碰 |
 | MaaTouch | native 二进制 | 多点触控注入 | MAA 内置分发 | 同上（mower 已用作触控后端） |
-| DroidCast | APK（broadcast 起 HTTP） | PNG 截图流 | mower 内置 vendor（1.3.0，实测可用） | **可复用**：控制台设备画面（可选） |
+| DroidCast | APK（mower 经 `CLASSPATH=<apk> app_process` 直跑 `Main` 类 + adb forward；上游亦支持 am broadcast） | PNG 截图流 | mower 内置 vendor（1.3.0，SHA-256 校验锚定上游 commit c779c66） | **可复用**：控制台设备画面（可选）。⚠️ 实证副作用：清单含 `LAUNCHER`+`MainActivity`，安装后在模拟器桌面留下 "DroidCast" 图标且 mower 从不卸载（`com.rayworks.droidcast`，仅当 `screenshot_backend == "droidcast"` 时安装） |
 | atx-agent / uiautomator2 | Go 二进制 + UiAutomator HTTP | UI 自动化全家桶 | uiautomator2 3.x 已转向 appium 风格 server，atx-agent 事实遗留；ABI 兼容历史问题多 | 不复用（功能越界 + 维护风险） |
 | sonic-android-agent | Java/Kotlin agent | 远控/自动化测试平台 | 活跃，但绑定 Sonic 平台 | 太重，不绑定 |
 | DeviceFarmer/STF | 宿主 provider + web | 设备农场管理 | 维护中 | 架构参考（租约/预约/远控），非 agent 复用对象 |
@@ -45,6 +45,13 @@ adb 兜底。**不学什么**：厂商深度适配矩阵是执行器（mower/MAA
 **不做**：截屏/触控控制面（mower/MAA 领域，避免重复造轮子）；UI 自动化（INV-1 边界 + 腐化逻辑同源）。
 
 ## 四、复用 vs 自研
+
+**形态选择的事实输入（2026-10-09 事实核查）**：DroidCast 作为 APK 安装会在模拟器桌面留下
+图标（`category.LAUNCHER` + `MainActivity`，显示名 "DroidCast"）且 mower 从不卸载；而
+scrcpy-server（jar）与 MaaTouch（native 二进制）走 `/data/local/tmp` + app_process/exec，
+**无痕**、不进应用列表。MAA 全部触控模式亦不安装应用。
+→ **akops-agent 应采用无痕形态**（native 静态二进制 exec，或 jar via app_process），
+禁止打包成带 LAUNCHER 的 APK。
 
 自研 `akops-agent` v0（建议 Go：`GOOS=android` 免 cgo 交叉编译 arm64/x86_64 最省事；Rust+NDK 亦可）：
 - 功能面：`POST /heartbeat`、`GET /metrics`、`POST /app/install|launch|force-stop`、
