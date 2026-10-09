@@ -306,7 +306,7 @@ async fn stop_session(
     if s.executor == "mower"
         && let Some(port) = s.mower_port
     {
-        let token = format!("arkknight-s{}", s.id);
+        let token = arkknight_core::executor::webview_token_for(s.id);
         match stop_via_http(port, &token).await {
             Ok(()) => {
                 println!("  已发送 POST /stop");
@@ -397,7 +397,7 @@ async fn logs(wd: &Workdir, id: u64, follow: bool) -> Result<()> {
     }
 }
 
-fn pid_alive(pid: Option<u32>) -> bool {
+pub(crate) fn pid_alive(pid: Option<u32>) -> bool {
     match pid {
         None => false,
         Some(p) => {

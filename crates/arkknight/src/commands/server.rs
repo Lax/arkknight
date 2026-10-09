@@ -189,6 +189,7 @@ fn router(state: AppState) -> Router {
             "/api/sessions/{id}/logs",
             axum::routing::get(api_session_logs),
         )
+        .route("/api/processes", axum::routing::get(api_processes))
         .route(
             "/api/accounts",
             axum::routing::get(api_accounts).post(api_account_create),
@@ -405,6 +406,101 @@ async fn shutdown_signal() {
     {
         let _ = tokio::signal::ctrl_c().await;
     }
+}
+
+// ---------- 运行中的进程 ----------
+
+/// 活跃状态集合（§10.2 持有租约的状态）。
+const ACTIVE_STATES: [&str; 5] = ["created", "queued", "switching", "running", "draining"];
+
+async fn api_processes(
+    State(s): State<AppState>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let mut managed = Vec::new();
+    let mut owned_pids = std::collections::HashSet::new();
+    for r in s.store.list_sessions(100).unwrap_or_default() {
+        if !ACTIVE_STATES.contains(&r.state.as_str()) {
+            continue;
+        }
+        let (pid, _port) = r
+            .locator
+            .as_deref()
+            .map(arkknight_core::executor::parse_locator)
+            .unwrap_or((None, None));
+        let alive = pid.map(|p| crate::commands::session::pid_alive(Some(p))).unwrap_or(false);
+        if let Some(p) = pid {
+            owned_pids.insert(p);
+        }
+        managed.push(json!({
+            "source": "managed",
+            "kind": r.executor,
+            "session_id": r.id,
+            "account": r.account_key,
+            "device": r.device_name,
+            "state": r.state,
+            "pid": pid,
+            "mower_port": r.mower_port,
+            "alive": alive,
+            "started_at_ms": r.started_at_ms,
+            "deep_link": r.mower_port.map(|p| {
+                format!("http://127.0.0.1:{p}/?token={}", arkknight_core::executor::webview_token_for(r.id))
+            }),
+        }));
+    }
+
+    // 外部（非 arkknight 托管）的 mower/maa 进程：/proc 扫描，仅 Unix
+    let external = if q.get("external").map(|v| v == "1").unwrap_or(false) {
+        #[cfg(unix)]
+        {
+            scan_external_processes(&owned_pids)
+        }
+        #[cfg(not(unix))]
+        {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    Json(json!({"managed": managed, "external": external}))
+}
+
+/// 扫描 /proc 下命令行含 mower/maa 特征、但不属于 arkknight 托管会话的进程。
+#[cfg(unix)]
+fn scan_external_processes(owned_pids: &std::collections::HashSet<u32>) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        if owned_pids.contains(&pid) {
+            continue;
+        }
+        let Ok(cmdline) = std::fs::read_to_string(e.path().join("cmdline")) else {
+            continue;
+        };
+        let cmdline = cmdline.replace('\u{0}', " ");
+        let kind = if cmdline.contains("run_server.py") {
+            "mower"
+        } else if cmdline.contains("/maa ") || cmdline.ends_with("/maa") || cmdline.contains("maa run")
+        {
+            "maa"
+        } else {
+            continue;
+        };
+        out.push(json!({
+            "source": "external",
+            "kind": kind,
+            "pid": pid,
+            "alive": true,
+            "cmdline": cmdline.trim(),
+        }));
+    }
+    out
 }
 
 /// 供 schedule CLI 的轻量 HTTP 客户端（无 reqwest 依赖）：返回响应体文本。

@@ -169,7 +169,7 @@ impl Executor for MowerProcessExecutor {
         // 优雅通道：POST /stop（mower 自带端点）；失败不阻断，超时后强杀兜底
         let (_, port) = parse_locator(&handle.locator);
         if let Some(port) = port {
-            let token = format!("arkknight-s{}", handle.session_id);
+            let token = crate::executor::webview_token_for(handle.session_id);
             if let Err(e) = stop_via_http(port, &token).await {
                 tracing::warn!(
                     session = handle.session_id,

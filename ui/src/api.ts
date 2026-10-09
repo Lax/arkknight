@@ -90,7 +90,27 @@ export interface StatusInfo {
   devices: { name: string; host_adb: string }[]
 }
 
+export interface ProcessInfo {
+  source: "managed" | "external"
+  kind: string
+  session_id?: number
+  account?: string
+  device?: string
+  state?: string
+  pid?: number | null
+  mower_port?: number | null
+  alive?: boolean
+  started_at_ms?: number | null
+  deep_link?: string | null
+  cmdline?: string
+}
+
 export const api = {
+  processes: (external = true) =>
+    req('GET', `/api/processes?external=${external ? 1 : 0}`) as Promise<{
+      managed: ProcessInfo[]
+      external: ProcessInfo[]
+    }>,
   status: () => req('GET', '/api/status') as Promise<StatusInfo>,
   sessions: (limit = 30) => req('GET', `/api/sessions?limit=${limit}`) as Promise<SessionInfo[]>,
   sessionLogs: (id: number, tail = 300) =>

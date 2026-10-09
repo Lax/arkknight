@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NCard, NSpace, NTag, NText, useMessage } from 'naive-ui'
-import { getToken, api, type StatusInfo, type SessionInfo, fmtMs } from '../api'
+import { getToken, api, type StatusInfo, type SessionInfo, type ProcessInfo, fmtMs } from '../api'
 
 const message = useMessage()
 const hasToken = ref(getToken().length > 0)
 const status = ref<StatusInfo | null>(null)
 const sessions = ref<SessionInfo[]>([])
+const procs = ref<{ managed: ProcessInfo[]; external: ProcessInfo[] } | null>(null)
 let timer: number | undefined
 
 async function refresh(): Promise<void> {
   try {
     status.value = await api.status()
     sessions.value = (await api.sessions(8)) ?? []
+    procs.value = await api.processes(true)
   } catch (e) {
     message.error(`刷新失败：${(e as Error).message}`)
   }
@@ -63,6 +65,36 @@ onBeforeUnmount(() => window.clearInterval(timer))
             在左侧栏「API token」处配置
           </n-text>
         </n-space>
+      </n-space>
+    </n-card>
+
+    <n-card title="运行中的进程" size="small">
+      <n-space vertical>
+        <n-tag v-if="!procs || (!procs.managed.length && !procs.external.length)" type="default">
+          当前没有运行中的 mower / maa 进程
+        </n-tag>
+        <div v-for="(p, i) in procs?.managed ?? []" :key="'m' + i" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+          <n-tag size="small" :type="p.alive ? 'success' : 'error'">{{ p.alive ? '运行中' : '已退出' }}</n-tag>
+          <n-tag size="small" type="info">{{ p.kind }}</n-tag>
+          <n-text strong>{{ p.account }}</n-text>
+          <span style="color: gray">会话 #{{ p.session_id }} @ {{ p.device }}</span>
+          <span style="color: gray">pid={{ p.pid ?? '—' }}</span>
+          <a
+            v-if="p.alive && p.deep_link"
+            :href="p.deep_link"
+            target="_blank"
+            style="color: #4098fc"
+          >mower UI :{{ p.mower_port }} ↗</a>
+        </div>
+        <n-text v-if="procs?.external?.length" depth="3" style="font-size: 12px">
+          未托管进程（非 arkknight 启动，仅供参考）：
+        </n-text>
+        <div v-for="(p, i) in procs?.external ?? []" :key="'e' + i" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+          <n-tag size="small" type="warning">未托管</n-tag>
+          <n-tag size="small" type="default">{{ p.kind }}</n-tag>
+          <span style="color: gray">pid={{ p.pid }}</span>
+          <n-text depth="3" style="font-size: 12px">{{ p.cmdline }}</n-text>
+        </div>
       </n-space>
     </n-card>
 

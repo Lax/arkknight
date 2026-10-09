@@ -19,6 +19,11 @@ use crate::model::{Account, ExecutorKind, RunnerKind};
 pub use maa::MaaCliExecutor;
 pub use mower::{MowerProcessExecutor, parse_locator, stop_via_http};
 
+/// 会话 webview token 的单源生成（深链、/stop、进程列表共用）。
+pub fn webview_token_for(session_id: u64) -> String {
+    format!("arkknight-s{session_id}")
+}
+
 /// 执行器错误。
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutorError {
@@ -59,7 +64,7 @@ impl SessionCtx {
     /// M1 采用可预测值（仅面向 localhost/内网）；server 暴露公网时由任务 8
     /// 升级为随机 token 并经 /api 下发。
     pub fn webview_token(&self) -> String {
-        format!("arkknight-s{}", self.session_id)
+        webview_token_for(self.session_id)
     }
 }
 
