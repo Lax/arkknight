@@ -156,8 +156,12 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
             ),
             _ => Check::warn(
                 "mower",
-                format!("{} 存在但不是 git 检出（无法 mower update）", m.path.display()),
-                "建议 git clone arknights-mower（alpha 分支）",
+                format!(
+                    "{} 存在但非 git 检出：仅 `mower update`（git 模式）不可用，会话运行不受影响",
+                    m.path.display()
+                ),
+                "容器化/镜像化部署属正常形态：mower 更新走镜像重建（设计 §12）。\
+                 若需 git 模式再 clone arknights-mower（alpha 分支）",
             ),
         },
         None => Check::warn(
@@ -335,9 +339,24 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
             "运行 `arkknight account add <key>`",
         ));
     } else {
+        let provisioned = if let Ok(store) = crate::store::Store::open(&wd.db_path()) {
+            wd.account_keys()
+                .iter()
+                .map(|id| store.list_logins(id).map(|l| l.len()).unwrap_or(0))
+                .sum::<usize>()
+        } else {
+            0
+        };
         checks.push(Check::ok(
             "account",
-            format!("已注册 {n_accounts} 个账号，account_name 唯一性通过"),
+            format!(
+                "已注册 {n_accounts} 个账号，account_name 唯一性通过；预置登录记录 {provisioned} 条{}",
+                if provisioned < n_accounts {
+                    "（存在未预置账号：切号前需 provision）"
+                } else {
+                    ""
+                }
+            ),
         ));
     }
 
