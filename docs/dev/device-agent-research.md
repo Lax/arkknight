@@ -46,12 +46,22 @@ adb 兜底。**不学什么**：厂商深度适配矩阵是执行器（mower/MAA
 
 ## 四、复用 vs 自研
 
-**形态选择的事实输入（2026-10-09 事实核查）**：DroidCast 作为 APK 安装会在模拟器桌面留下
-图标（`category.LAUNCHER` + `MainActivity`，显示名 "DroidCast"）且 mower 从不卸载；而
-scrcpy-server（jar）与 MaaTouch（native 二进制）走 `/data/local/tmp` + app_process/exec，
-**无痕**、不进应用列表。MAA 全部触控模式亦不安装应用。
-→ **akops-agent 应采用无痕形态**（native 静态二进制 exec，或 jar via app_process），
-禁止打包成带 LAUNCHER 的 APK。
+**形态光谱与决策框架**（2026-10-09 事实核查 + 复议；取代早先「必须无痕」的绝对表述）：
+
+| 形态 | 桌面图标 | 应用列表 | 保活/自启 | 成本 |
+|---|---|---|---|---|
+| A. 无痕：`/data/local/tmp` + exec/`app_process` | 无 | 不可见 | **无**（进程被杀即消失，宿主重启即无） | push+chmod，最轻 |
+| B. 半无痕 APK（无 LAUNCHER） | 无 | 可见、可卸载 | 有 Context/前台服务/START_STICKY/BOOT_COMPLETED | `pm install` + 固定签名 |
+| C. 桌面 APK（带 LAUNCHER，DroidCast 即此类） | 有 | 可见 | 同 B | 图标=状态可见性，但污染桌面 |
+
+决策规则（能力驱动，非洁癖驱动）：
+- **A 为默认起点**（心跳/指标/轻量守护够用且 bootstrap 最轻）——这是排期选择，不是禁令
+- 看门狗需要「被杀自愈、开机自启」时（app_process 进程无任何拉活机制），升 **B**：
+  前台服务 + BOOT_COMPLETED 是标准解；固定自签签名避免 DroidCast 式签名冲突
+- **C** 仅当把「桌面可见的守护状态」当 feature（可点开看状态/停止）
+- **透明度约束（替代无痕禁令）**：无论何种形态，`doctor`/`status` 必须如实报告 agent 的
+  存在/版本/运行态，并提供显式卸载命令；**无痕 ≠ 反检测**——akops 不做行为伪装（R4 诚实原则），
+  无痕仅指不占用户桌面、应用列表状态如实可控
 
 自研 `akops-agent` v0（建议 Go：`GOOS=android` 免 cgo 交叉编译 arm64/x86_64 最省事；Rust+NDK 亦可）：
 - 功能面：`POST /heartbeat`、`GET /metrics`、`POST /app/install|launch|force-stop`、
