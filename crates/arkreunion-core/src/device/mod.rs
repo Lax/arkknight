@@ -85,6 +85,13 @@ pub trait DeviceBackend: Send + Sync {
     /// 宿主/容器双视角地址。
     fn endpoints(&self) -> DeviceEndpoints;
 
+    /// 设备屏幕截图（PNG 字节），供控制台设备页展示。
+    ///
+    /// 纯 adb 只读操作（`exec-out screencap -p`），不属 INV-1 禁止的自研游戏内自动化。
+    async fn screenshot(&self) -> Result<Vec<u8>, DeviceError> {
+        Err(DeviceError::Unsupported("screenshot"))
+    }
+
     /// 启动一个新实例（M2：RedroidDocker 模板实例化），返回设备名。
     async fn provision(&self, _spec: RedroidSpec) -> Result<String, DeviceError> {
         Err(DeviceError::Unsupported("provision"))

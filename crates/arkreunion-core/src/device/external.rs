@@ -40,6 +40,45 @@ impl ExternalBackend {
         Ok(pkgs)
     }
 
+    /// 截屏：`adb exec-out screencap -p` 输出 PNG 二进制。
+    ///
+    /// 用 `exec-out` 而非 `shell`——后者会把 CRLF 转换进二进制流，破坏 PNG。
+    async fn screenshot_impl(&self) -> Result<Vec<u8>, DeviceError> {
+        let serial = self.device.connection.host_adb.as_str();
+        // 网络 adb 需先 connect：daemon 重启后 adb server 会丢失连接记录
+        let _ = {
+            let mut cmd = tokio::process::Command::new(&self.adb_path);
+            cmd.args(["connect", serial])
+                .stdin(std::process::Stdio::null());
+            tokio::time::timeout(std::time::Duration::from_secs(10), cmd.output())
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+        };
+        let mut cmd = tokio::process::Command::new(&self.adb_path);
+        cmd.args(["-s", serial, "exec-out", "screencap", "-p"])
+            .stdin(std::process::Stdio::null());
+        let out = tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output())
+            .await
+            .map_err(|_| DeviceError::Adb(format!("{serial} 截屏超时")))?
+            .map_err(|e| DeviceError::Adb(format!("spawn adb 失败：{e}")))?;
+        if !out.status.success() {
+            return Err(DeviceError::Adb(format!(
+                "截屏失败（退出码 {:?}）：{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        // PNG magic 校验：adb 异常时可能返回空或文本内容
+        if out.stdout.len() < 8 || &out.stdout[..8] != b"\x89PNG\r\n\x1a\n" {
+            return Err(DeviceError::Adb(format!(
+                "截屏未返回 PNG（{} 字节）：设备可能息屏或未就绪",
+                out.stdout.len()
+            )));
+        }
+        Ok(out.stdout)
+    }
+
     async fn adb(&self, args: &[&str]) -> Result<String, DeviceError> {
         let serial = self.device.connection.host_adb.as_str();
         let mut cmd = tokio::process::Command::new(&self.adb_path);
@@ -82,6 +121,10 @@ impl DeviceBackend for ExternalBackend {
             docker_adb: self.device.connection.docker_adb.clone(),
             docker_network: self.device.connection.docker_network.clone(),
         }
+    }
+
+    async fn screenshot(&self) -> Result<Vec<u8>, DeviceError> {
+        self.screenshot_impl().await
     }
 
     async fn health(&self) -> Result<DeviceHealth, DeviceError> {
