@@ -211,17 +211,21 @@ arkreunion/
 
 ## 6. 域模型
 
-### 6.1 Account（文件：`accounts/<id>/account.toml`）
+### 6.1 Account（文件：`accounts/<key>/account.toml`）
+
+> **命名约定**：`Account` 的四个标识字段各司其职，勿混——
+> `key` 是**本地定位键**（本项目内部概念：目录名 + CLI 参数），
+> 而 `account_name` / `uid` 是**游戏侧标识**，`display_name` 仅供展示。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | string | 唯一标识（目录名，slug） |
+| `key` | string | 本地定位键（目录名，slug）；游戏身份不由它表达 |
 | `display_name` | string | 展示名 |
 | `server` | `official \| bilibili` | 服务器类型（影响 client_type/包名/资源） |
 | `account_name` | string | **MAA 切号匹配串**（官服=打码手机号片段，B服=昵称；须全局唯一，`doctor` 校验） |
 | `uid` | string? | 游戏 UID（纯数字）。配置后切号成功即跑 UID 核验（§9.4）；缺省跳过核验（doctor 告警串数据风险） |
 | `enabled` | bool | 禁用后不参与调度 |
-| `schedule.windows` | `[{start,end,executor,task?}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa`；maa 窗口可指定 `task`（accounts/<id>/maa/tasks/ 下的任务名，缺省拒绝调度 maa 窗口）；窗口须 start<end（不跨午夜，校验拒绝） |
+| `schedule.windows` | `[{start,end,executor,task?}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa`；maa 窗口可指定 `task`（accounts/<key>/maa/tasks/ 下的任务名，缺省拒绝调度 maa 窗口）；窗口须 start<end（不跨午夜，校验拒绝） |
 | `schedule.priority` | int 0-100 | 队列优先级，默认 50 |
 | `schedule.slice` | duration | 时间片长度，覆盖全局默认（默认 2h） |
 | `provisioned_on` | `[device]` | 已人工登录过的设备（亲和的种子数据，正式记录在 SQLite） |
@@ -245,7 +249,7 @@ arkreunion/
 | 字段 | 说明 |
 |---|---|
 | `id` | 自增 |
-| `account_id` / `device_name` / `executor` | 归属 |
+| `account_key` / `device_name` / `executor` | 归属 |
 | `runner` | `docker \| process`（mower 会话的运行形态） |
 | `state` | 状态机见 §10.2 |
 | `slice_deadline` / `max_runtime_deadline` | 两个超时源 |
@@ -297,7 +301,7 @@ pub trait DeviceBackend: Send + Sync {
 
 - bollard 创建容器：镜像标签（如 `Lax/mrfz:2771-update-*`）、宿主端口段 28000-28099 分配、named volume 持久化登录态、nvidia runtime、watchdog/init.rc bind（复用现有资产）
 - **水位准入**：provision 前检查 `host_watermark()`（内存 ≥ 模板 mem_limit + headroom；CPU 空闲；GPU 显存可选）→ 不满足则排队而非扩容（动态上限，无人为台数上限）
-- **亲和矩阵**：SQLite `logins(account_id, device_name, status, last_verified_at)`；调度时优先分配已登录设备；未登录则可触发预置任务（§9.3）
+- **亲和矩阵**：SQLite `logins(account_key, device_name, status, last_verified_at)`；调度时优先分配已登录设备；未登录则可触发预置任务（§9.3）
 
 ---
 
@@ -320,7 +324,7 @@ pub trait Executor: Send + Sync {
 
 ### 8.2 MaaCliExecutor
 
-- 每账号独立 `MAA_CONFIG_DIR = <workdir>/accounts/<id>/maa/`（内含 `profiles/default.toml` + `tasks/*.toml`），完全隔离、无跨账号共享文件
+- 每账号独立 `MAA_CONFIG_DIR = <workdir>/accounts/<key>/maa/`（内含 `profiles/default.toml` + `tasks/*.toml`），完全隔离、无跨账号共享文件
 - 运行 = `maa run <task> -p default --batch`，子进程管理（tokio::process），stdout/stderr 实时入会话日志
 - MaaCore 本体与热更新资源由 maa-cli 全局安装目录统一管理（多账号共享，按 server 类型区分 resource 差异走 profile 的 `resource.*` 字段）
 - 用途：a) 切号（§9，任务=startup）；b) 独立 MAA 任务会话（周计划刷图、肉鸽等，用户自定义 tasks/*.toml）
@@ -332,7 +336,7 @@ mower 会话的实际运行形态由 **Runner** 决定，两种实现，接口�
 | | DockerRunner | ProcessRunner |
 |---|---|---|
 | 形态 | bollard 起容器（镜像由用户 Dockerfile 或现有 `Dockerfile.mower` 系构建） | 本地 mower 检出 + Python 环境，spawn `python run_server.py` |
-| 配置注入 | 挂载 `accounts/<id>/mower` → `/mower/config`（**读写**，UI 改动直接持久化）；tmp 卷按会话分配 | `MOWER_DATA_DIR = accounts/<id>/mower-data/`（内含指向 `../mower` 的 config 符号链接与 tmp/） |
+| 配置注入 | 挂载 `accounts/<key>/mower` → `/mower/config`（**读写**，UI 改动直接持久化）；tmp 卷按会话分配 | `MOWER_DATA_DIR = accounts/<key>/mower-data/`（内含指向 `../mower` 的 config 符号链接与 tmp/） |
 | adb 地址 | `docker_adb`（容器网络） | `host_adb` |
 | 适用 | Linux 服务器/Docker Desktop | 任意平台、无 Docker 场景（Windows 原生跑 mower） |
 | 一期状态 | **M1 优先实现**（贴合现有验证环境） | M1 并行交付（跨平台承诺） |
@@ -375,7 +379,7 @@ mower 会话的实际运行形态由 **Runner** 决定，两种实现，接口�
 **方案（MAA 框架内实现，INV-1 合规——核验不触碰登录自动化）**：
 
 1. 账号配置 `uid`（provision 人工登录时录入 / `account add --uid` / 控制台 PATCH）
-2. 物化器在 `accounts/<id>/maa/resource/pipeline/arkreunion_uid_check.json` 生成核验
+2. 物化器在 `accounts/<key>/maa/resource/pipeline/arkreunion_uid_check.json` 生成核验
    pipeline（主界面点头像 → 个人信息页 OCR 期望 UID → 点返回；roi 以 1280x720 基准，
    MaaCore 自动缩放，首次使用建议校准）+ `tasks/uid_check.toml`
 3. 切号流程：startup 成功后运行 `maa run arkreunion-uid-check -p default --batch
@@ -448,7 +452,7 @@ Created → Queued ─(获得设备租约)→ Switching → Running ─┬─(sl
 <workdir>/
 ├── arkreunion.toml                # 主配置（全局策略/路径/服务）
 ├── devices/<name>.toml       # 设备注册表
-├── accounts/<id>/
+├── accounts/<key>/
 │   ├── account.toml          # 账号身份 + 调度策略（§6.1）
 │   ├── maa/                  # MAA_CONFIG_DIR（profiles/default.toml + tasks/*.toml）——物化产物+用户自定义任务
 │   ├── mower/                # mower 配置 bundle（conf.yml/plan.json/weekly_plans.yml）——物化产物+用户通过深链 UI 的改动
@@ -571,16 +575,16 @@ watermark    = { free_mem_gb = 14, cpu_idle_pct = 20 }   # 扩容准入水位
 GET    /api/status                       # 总览：账号/设备/会话/队列/水位
 # 账号
 GET    /api/accounts                     POST /api/accounts
-GET    /api/accounts/{id}   PATCH/DELETE
-POST   /api/accounts/{id}/provision      # 预置（返回投屏指引，WS 推进度）
+GET    /api/accounts/{key}   PATCH/DELETE
+POST   /api/accounts/{key}/provision      # 预置（返回投屏指引，WS 推进度）
 # 设备
 GET    /api/devices                      POST /api/devices
 GET    /api/devices/{name}  PATCH/DELETE
 POST   /api/devices/{name}/test          # adb 探测
 POST   /api/devices/{name}/watermark     # 水位（M2）
 # 切号与会话
-POST   /api/switch        {account_id, device?}
-GET    /api/sessions                     POST /api/sessions {account_id, executor, slice?}
+POST   /api/switch        {account_key, device?}
+GET    /api/sessions                     POST /api/sessions {account_key, executor, slice?}
 DELETE /api/sessions/{id}                POST /api/sessions/{id}/drain
 # 调度
 GET    /api/schedule                     POST /api/schedule/pause | /api/schedule/resume
@@ -605,7 +609,7 @@ SQLite（rusqlite + WAL + bundled），`state/arkreunion.db`，schema 版本化�
 
 ```sql
 -- 运行态（可重建部分不入库，INV-4）；实现基线见 crates/arkreunion-core/src/store/mod.rs SCHEMA_V1
-sessions(id PK, account_id, device_name, executor, runner, state,
+sessions(id PK, account_key, device_name, executor, runner, state,
          mower_port, locator,                    -- locator=`pid=<n> port=<p>`，跨进程 stop 依赖
          slice_deadline_ms, max_runtime_deadline_ms,
          started_at_ms, ended_at_ms, outcome, error)
@@ -614,12 +618,12 @@ device_leases(device_name PK, holder, acquired_at_ms, heartbeat_at_ms)
                -- holder ∈ 'session:<id>' | 'switch:<account>' | 'provision:<account>'：
                -- 手动 switch/provision 同样短暂持有租约（§6.5），不伪造会话行
 port_allocations(port PK, holder, kind, allocated_at_ms)       -- 分配前绑定探测（R8）
-switch_log(id PK, ts_ms, account_id, device_name, ok, duration_ms, retries, maa_log_excerpt)
-logins(account_id, device_name, status, first_at_ms, last_verified_ms, PRIMARY KEY(account_id, device_name))
+switch_log(id PK, ts_ms, account_key, device_name, ok, duration_ms, retries, maa_log_excerpt)
+logins(account_key, device_name, status, first_at_ms, last_verified_ms, PRIMARY KEY(account_key, device_name))
 maintenance_log(id PK, ts_ms, target, action, from_version, to_version, ok, detail)
 -- 统计
-stats_daily(day TEXT, account_id, minutes_run, sessions_cnt, switch_cnt, sanity_spent,
-            PRIMARY KEY(day, account_id))   -- 分钟数来自 sessions；明细来自各 bundle report.csv 导入
+stats_daily(day TEXT, account_key, minutes_run, sessions_cnt, switch_cnt, sanity_spent,
+            PRIMARY KEY(day, account_key))   -- 分钟数来自 sessions；明细来自各 bundle report.csv 导入
 ```
 
 日志：tracing 分层（arkreunion 自身 → `logs/arkreunion.log` 轮转；会话 stdout/stderr → `logs/sessions/<id>.log` 归档，SQLite 只存索引与尾部摘录）。
@@ -782,7 +786,7 @@ mower 日志事件模式集 v1；空闲信号提前释放；跑单窗口优先�
 
 ### 附录 B：物化产物示例
 
-**MAA profile**（`accounts/<id>/maa/profiles/default.toml`，切号前运行期改写 address）：
+**MAA profile**（`accounts/<key>/maa/profiles/default.toml`，切号前运行期改写 address）：
 
 ```toml
 [connection]
@@ -794,7 +798,7 @@ touch_mode = "ADB"
 # 官服默认；B 服账号物化为对应 platform 差异
 ```
 
-**MAA startup 任务**（`accounts/<id>/maa/tasks/startup.toml`）：
+**MAA startup 任务**（`accounts/<key>/maa/tasks/startup.toml`）：
 
 ```toml
 [[tasks]]

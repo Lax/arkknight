@@ -184,7 +184,12 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Account { cmd } => commands::account::run(wd()?, cmd).await,
         Device { cmd } => commands::device::run(wd()?, cmd).await,
         Completions { shell } => {
-            generate(shell, &mut Cli::command(), "arkreunion", &mut std::io::stdout());
+            generate(
+                shell,
+                &mut Cli::command(),
+                "arkreunion",
+                &mut std::io::stdout(),
+            );
             Ok(())
         }
         Server { port, bind, open } => {

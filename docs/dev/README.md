@@ -23,7 +23,7 @@ cd ui && npm install && npm run build
 ```
 
 冒烟（对真实环境）：`arkreunion init` → `arkreunion device add <name> --host-adb <addr>` →
-`arkreunion account add <id> --server official --account-name '138****0000'` →
+`arkreunion account add <key> --server official --account-name '138****0000'` →
 `arkreunion device test <name>` → `arkreunion doctor`。
 
 ## 文档规划（随代码落地逐步填充）

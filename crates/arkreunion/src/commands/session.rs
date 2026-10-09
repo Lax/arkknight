@@ -101,13 +101,13 @@ async fn start(
     wd: Workdir,
     _guard: WorkdirGuard,
     store: Arc<Store>,
-    account_id: String,
+    account_key: String,
     executor_name: String,
     slice: Option<String>,
     task: Option<String>,
 ) -> Result<()> {
     let cfg: AkopsConfig = wd.load_config()?;
-    let account = wd.load_account(&account_id)?;
+    let account = wd.load_account(&account_key)?;
     let dev = crate::commands::resolve_device(&wd, None)?;
 
     let kind = match executor_name.as_str() {
@@ -116,21 +116,23 @@ async fn start(
         other => bail!("executor {other:?} 不合法：mower|maa"),
     };
     if kind == ExecutorKind::Maa && task.is_none() {
-        bail!("--executor maa 需要 --task <名称>（accounts/{account_id}/maa/tasks/ 下的任务文件）");
+        bail!(
+            "--executor maa 需要 --task <名称>（accounts/{account_key}/maa/tasks/ 下的任务文件）"
+        );
     }
 
     // 一账号至多一个活跃会话（§6.5）
     if let Some(s) = store
-        .active_session_by_account(&account_id)
+        .active_session_by_account_key(&account_key)
         .map_err(|e| anyhow::anyhow!("{e}"))?
     {
-        bail!("账号 {account_id} 已有活跃会话 #{}（{}）", s.id, s.state);
+        bail!("账号 {account_key} 已有活跃会话 #{}（{}）", s.id, s.state);
     }
 
     // 会话行 + 设备租约
     let session_id = store
         .create_session(arkreunion_core::store::NewSession {
-            account_id: &account.id,
+            account_key: &account.key,
             device_name: &dev.name,
             executor: "mower",
             runner: Some("process"),
@@ -266,7 +268,7 @@ async fn stop(
             .map_err(|e| anyhow::anyhow!("{e}"))?
             .ok_or_else(|| anyhow::anyhow!("会话 {id} 不存在"))?,
         (None, Some(acc)) => store
-            .active_session_by_account(&acc)
+            .active_session_by_account_key(&acc)
             .map_err(|e| anyhow::anyhow!("{e}"))?
             .ok_or_else(|| anyhow::anyhow!("账号 {acc} 无活跃会话"))?,
         (None, None) => bail!("请提供会话 id 或 --account"),
@@ -357,7 +359,7 @@ async fn list(wd: &Workdir, limit: u32) -> Result<()> {
             s.id,
             s.state,
             s.executor,
-            s.account_id,
+            s.account_key,
             s.device_name,
             s.mower_port,
             s.started_at_ms,

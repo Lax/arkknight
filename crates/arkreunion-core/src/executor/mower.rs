@@ -89,7 +89,7 @@ impl Executor for MowerProcessExecutor {
         let port = ctx.mower_port.ok_or_else(|| {
             ExecutorError::Start("mower 会话须分配 webview 端口（SessionCtx.mower_port）".into())
         })?;
-        let account_dir = ctx.workdir.join("accounts").join(&ctx.account.id);
+        let account_dir = ctx.workdir.join("accounts").join(&ctx.account.key);
         let bundle = account_dir.join("mower");
         let conf = bundle.join("conf.yml");
         if !conf.is_file() {
@@ -215,7 +215,7 @@ mod tests {
         SessionCtx {
             session_id: 7,
             account: Account {
-                id: "main".into(),
+                key: "main".into(),
                 display_name: "m".into(),
                 server: Server::Official,
                 account_name: "1***2".into(),

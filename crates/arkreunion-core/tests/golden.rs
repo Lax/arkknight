@@ -50,7 +50,7 @@ fn assert_golden(name: &str, actual: &str) {
 
 fn account() -> Account {
     Account {
-        id: "main".into(),
+        key: "main".into(),
         display_name: "主号".into(),
         server: Server::Official,
         account_name: "123****8901".into(),

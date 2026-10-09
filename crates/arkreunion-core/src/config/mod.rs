@@ -350,11 +350,11 @@ impl Workdir {
     pub fn lock_file(&self) -> PathBuf {
         self.state_dir().join(".workdir.lock")
     }
-    pub fn account_dir(&self, id: &str) -> PathBuf {
-        self.accounts_dir().join(id)
+    pub fn account_dir(&self, key: &str) -> PathBuf {
+        self.accounts_dir().join(key)
     }
-    pub fn account_file(&self, id: &str) -> PathBuf {
-        self.account_dir(id).join("account.toml")
+    pub fn account_file(&self, key: &str) -> PathBuf {
+        self.account_dir(key).join("account.toml")
     }
     pub fn device_file(&self, name: &str) -> PathBuf {
         self.devices_dir().join(format!("{name}.toml"))
@@ -412,8 +412,8 @@ impl Workdir {
         fs::write(&path, header + &body).map_err(|e| CoreError::io(&path, e))
     }
 
-    /// 列出账号 id（按目录名排序；跳过无 account.toml 的目录）。
-    pub fn account_ids(&self) -> Vec<String> {
+    /// 列出账号 key（按目录名排序；跳过无 account.toml 的目录）。
+    pub fn account_keys(&self) -> Vec<String> {
         let mut ids: Vec<String> = fs::read_dir(self.accounts_dir())
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
@@ -427,16 +427,16 @@ impl Workdir {
     }
 
     /// 读取单个账号。
-    pub fn load_account(&self, id: &str) -> Result<Account> {
-        let path = self.account_file(id);
+    pub fn load_account(&self, key: &str) -> Result<Account> {
+        let path = self.account_file(key);
         let raw = fs::read_to_string(&path).map_err(|e| CoreError::io(&path, e))?;
         let acc: Account = toml::from_str(&raw)
             .map_err(|e| CoreError::Config(format!("解析 {} 失败：{e}", path.display())))?;
-        if acc.id != id {
+        if acc.key != key {
             return Err(CoreError::Config(format!(
-                "{} 中 id={:?} 与目录名不一致",
+                "{} 中 key={:?} 与目录名不一致",
                 path.display(),
-                acc.id
+                acc.key
             )));
         }
         acc.validate()?;
@@ -445,9 +445,9 @@ impl Workdir {
 
     /// 读取全部账号（任一解析失败即失败）。
     pub fn load_all_accounts(&self) -> Result<Vec<Account>> {
-        self.account_ids()
+        self.account_keys()
             .iter()
-            .map(|id| self.load_account(id))
+            .map(|key| self.load_account(key))
             .collect()
     }
 
@@ -494,12 +494,12 @@ impl Workdir {
     }
 
     /// 跨账号 `account_name` 唯一性检查（切号匹配串必须可唯一定位，§9.1）。
-    /// 返回 (account_name, [重复的账号 id]) 列表（长度>1 即冲突）。
+    /// 返回 (account_name, [重复的账号 key]) 列表（长度>1 即冲突）。
     pub fn account_name_duplicates(&self) -> Result<Vec<(String, Vec<String>)>> {
         let mut by_name: std::collections::BTreeMap<String, Vec<String>> = Default::default();
         for acc in self.load_all_accounts()? {
             if !acc.account_name.is_empty() {
-                by_name.entry(acc.account_name).or_default().push(acc.id);
+                by_name.entry(acc.account_name).or_default().push(acc.key);
             }
         }
         Ok(by_name
@@ -510,13 +510,13 @@ impl Workdir {
 
     /// 写入账号（同时创建 maa/mower/mower-data 子目录，§11.1）。
     pub fn save_account(&self, acc: &Account) -> Result<()> {
-        crate::model::account::validate_slug(&acc.id, "账号 id")?;
-        let dir = self.account_dir(&acc.id);
+        crate::model::account::validate_slug(&acc.key, "账号 key")?;
+        let dir = self.account_dir(&acc.key);
         for sub in ["", "maa", "mower", "mower-data"] {
             let p = dir.join(sub);
             fs::create_dir_all(&p).map_err(|e| CoreError::io(&p, e))?;
         }
-        let path = self.account_file(&acc.id);
+        let path = self.account_file(&acc.key);
         let body = toml::to_string_pretty(acc)
             .map_err(|e| CoreError::Config(format!("序列化账号失败：{e}")))?;
         fs::write(&path, body).map_err(|e| CoreError::io(&path, e))
@@ -532,10 +532,10 @@ impl Workdir {
     }
 
     /// 删除账号目录（危险：含物化产物与用户自定义任务，调用方须先确认）。
-    pub fn remove_account(&self, id: &str) -> Result<()> {
-        let dir = self.account_dir(id);
+    pub fn remove_account(&self, key: &str) -> Result<()> {
+        let dir = self.account_dir(key);
         if !dir.is_dir() {
-            return Err(CoreError::NotFound(format!("账号 {id} 不存在")));
+            return Err(CoreError::NotFound(format!("账号 {key} 不存在")));
         }
         fs::remove_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))
     }
@@ -609,7 +609,7 @@ mod tests {
     fn account_and_device_crud_with_uniqueness() {
         let (_tmp, wd) = tmp_workdir();
         let mk = |id: &str, name: &str| Account {
-            id: id.into(),
+            key: id.into(),
             display_name: id.into(),
             server: crate::model::Server::Official,
             account_name: name.into(),
@@ -620,7 +620,7 @@ mod tests {
         };
         wd.save_account(&mk("a", "123****0001")).unwrap();
         wd.save_account(&mk("b", "123****0002")).unwrap();
-        assert_eq!(wd.account_ids(), vec!["a", "b"]);
+        assert_eq!(wd.account_keys(), vec!["a", "b"]);
         assert_eq!(wd.account_name_duplicates().unwrap().len(), 0);
 
         wd.save_account(&mk("c", "123****0001")).unwrap();

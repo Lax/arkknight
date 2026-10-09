@@ -21,7 +21,7 @@ const executorOptions = [
 async function refresh(): Promise<void> {
   try {
     const list = (await api.accounts()) ?? []
-    accounts.value = list.map((a) => ({ label: `${a.id}（${a.enabled ? '启用' : '停用'}）`, value: a.id }))
+    accounts.value = list.map((a) => ({ label: `${a.key}（${a.enabled ? '启用' : '停用'}）`, value: a.key }))
   } catch (e) {
     message.error(`账号读取失败：${(e as Error).message}`)
   }

@@ -87,7 +87,10 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
         Ok(c) => {
             checks.push(Check::ok(
                 "config",
-                format!("arkreunion.toml 解析与校验通过（schema v{}）", c.schema_version),
+                format!(
+                    "arkreunion.toml 解析与校验通过（schema v{}）",
+                    c.schema_version
+                ),
             ));
             c
         }
@@ -285,18 +288,21 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
     }
 
     // 4. 账号一致性与唯一性（§9.1）
-    for id in wd.account_ids() {
-        if let Err(e) = wd.load_account(&id) {
+    for key in wd.account_keys() {
+        if let Err(e) = wd.load_account(&key) {
             checks.push(Check::fail("account", e.to_string(), "修复账号配置文件"));
         }
     }
     match wd.account_name_duplicates() {
         Ok(dups) if dups.is_empty() => {}
         Ok(dups) => {
-            for (name, ids) in dups {
+            for (name, keys) in dups {
                 checks.push(Check::fail(
                     "account",
-                    format!("account_name {name:?} 在多个账号中重复：{}", ids.join(", ")),
+                    format!(
+                        "account_name {name:?} 在多个账号中重复：{}",
+                        keys.join(", ")
+                    ),
                     "MAA 按此串在快速登录列表唯一匹配（§9.1）；请修改为可唯一区分的片段",
                 ));
             }
@@ -308,7 +314,7 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
         let empty: Vec<&str> = accounts
             .iter()
             .filter(|a| a.account_name.is_empty())
-            .map(|a| a.id.as_str())
+            .map(|a| a.key.as_str())
             .collect();
         if !empty.is_empty() {
             checks.push(Check::warn(
@@ -321,12 +327,12 @@ pub async fn run(wd: &Workdir, overrides: &detect::DetectOverrides) -> Report {
             ));
         }
     }
-    let n_accounts = wd.account_ids().len();
+    let n_accounts = wd.account_keys().len();
     if n_accounts == 0 {
         checks.push(Check::warn(
             "account",
             "未注册任何账号",
-            "运行 `arkreunion account add <id>`",
+            "运行 `arkreunion account add <key>`",
         ));
     } else {
         checks.push(Check::ok(

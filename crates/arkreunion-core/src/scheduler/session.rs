@@ -95,12 +95,12 @@ pub async fn run_session_flow(
     events: &EventBus,
 ) -> SessionRunResult {
     // 亲和前提（§9.2）：调度切号只对已预置对有效
-    match store.login_status(&account.id, &device.name) {
+    match store.login_status(&account.key, &device.name) {
         Ok(Some(s)) if s == "provisioned" => {}
         _ => {
             let msg = format!(
                 "账号 {} 未在设备 {} 预置，跳过自动调度（先 arkreunion provision）",
-                account.id, device.name
+                account.key, device.name
             );
             tracing::warn!("{msg}");
             return SessionRunResult {
@@ -114,7 +114,7 @@ pub async fn run_session_flow(
 
     // 会话行 + 设备租约
     let session_id = match store.create_session(NewSession {
-        account_id: &account.id,
+        account_key: &account.key,
         device_name: &device.name,
         executor: match executor_kind {
             ExecutorKind::Mower => "mower",
@@ -169,7 +169,7 @@ pub async fn run_session_flow(
     let switch_out = execute_switch(&plan).await;
     let _ = store.insert_switch_log(&crate::store::SwitchLogEntry {
         ts_ms: crate::store::now_ms(),
-        account_id: account.id.clone(),
+        account_key: account.key.clone(),
         device_name: device.name.clone(),
         ok: switch_out.ok,
         duration_ms: switch_out.duration_ms,
@@ -264,7 +264,7 @@ pub async fn run_session_flow(
     tracing::info!(session = session_id, locator = %handle.locator, "会话运行中");
     events.emit(
         "session_running",
-        &serde_json::json!({"account_id": account.id, "session_id": session_id, "mower_port": port}),
+        &serde_json::json!({"account_key": account.key, "session_id": session_id, "mower_port": port}),
     );
 
     // ---- 监控环：双超时 + 看门狗 + 停止信号（§10.2）----

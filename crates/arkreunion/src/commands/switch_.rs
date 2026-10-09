@@ -13,7 +13,7 @@ use crate::commands::{open_store, recover_orphans, resolve_device};
 pub(crate) async fn run(
     wd: Workdir,
     _guard: WorkdirGuard,
-    account_id: String,
+    account_key: String,
     device: Option<String>,
     timeout: Option<String>,
 ) -> Result<()> {
@@ -21,7 +21,7 @@ pub(crate) async fn run(
     let store = open_store(&wd)?;
     recover_orphans(&store);
 
-    let account = wd.load_account(&account_id)?;
+    let account = wd.load_account(&account_key)?;
     let dev = resolve_device(&wd, device.as_deref())?;
 
     let mut ctx = SwitchCtx::new(&wd, &cfg, store, account, dev);
@@ -32,7 +32,7 @@ pub(crate) async fn run(
 
     println!(
         "切号 {} → {}（MAA 官方能力：maa run startup --batch）…",
-        ctx.account.id, ctx.device.name
+        ctx.account.key, ctx.device.name
     );
     let outcome = run_switch(&ctx).await.context("切号失败")?;
     if outcome.ok {

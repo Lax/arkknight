@@ -11,10 +11,10 @@ use arkreunion_core::model::{
 
 #[derive(Subcommand, Debug)]
 pub enum AccountCmd {
-    /// 注册账号（写入 accounts/<id>/account.toml 并创建 maa/mower 目录骨架）
+    /// 注册账号（写入 accounts/<key>/account.toml 并创建 maa/mower 目录骨架）
     Add {
-        /// 账号 id（目录名，slug）
-        id: String,
+        /// 账号 key（本地定位键 = 目录名，slug；非游戏身份）
+        key: String,
         /// 服务器类型
         #[arg(long)]
         server: Server,
@@ -24,7 +24,7 @@ pub enum AccountCmd {
         /// 游戏 UID（切号后 OCR 核验防串数据，可后补）
         #[arg(long)]
         uid: Option<String>,
-        /// 展示名（默认= id）
+        /// 展示名（默认= key）
         #[arg(long)]
         display_name: Option<String>,
         /// 队列优先级 0-100（默认 50）
@@ -40,18 +40,18 @@ pub enum AccountCmd {
     /// 列出账号
     List,
     /// 查看账号详情
-    Show { id: String },
+    Show { key: String },
     /// 删除账号（含其 maa/mower bundle，不可恢复）
     Remove {
-        id: String,
+        key: String,
         /// 跳过确认
         #[arg(long)]
         yes: bool,
     },
     /// 启用调度
-    Enable { id: String },
+    Enable { key: String },
     /// 停用调度
-    Disable { id: String },
+    Disable { key: String },
 }
 
 pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
@@ -62,7 +62,7 @@ pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
     };
     match cmd {
         AccountCmd::Add {
-            id,
+            key,
             server,
             account_name,
             uid,
@@ -71,23 +71,23 @@ pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
             slice,
             windows,
         } => {
-            validate_slug(&id, "账号 id").map_err(anyhow::Error::from)?;
-            if wd.account_file(&id).exists() {
-                bail!("账号 {id} 已存在");
+            validate_slug(&key, "账号 key").map_err(anyhow::Error::from)?;
+            if wd.account_file(&key).exists() {
+                bail!("账号 {key} 已存在");
             }
             let mut windows_parsed = Vec::new();
             for w in &windows {
                 windows_parsed.push(parse_window(w)?);
             }
             let slice = match slice.as_deref() {
-                Some(s) => {
-                    Some(arkreunion_core::config::HumanDuration::parse(s).map_err(anyhow::Error::msg)?)
-                }
+                Some(s) => Some(
+                    arkreunion_core::config::HumanDuration::parse(s).map_err(anyhow::Error::msg)?,
+                ),
                 None => None,
             };
             let acc = Account {
-                id: id.clone(),
-                display_name: display_name.unwrap_or_else(|| id.clone()),
+                key: key.clone(),
+                display_name: display_name.unwrap_or_else(|| key.clone()),
                 server,
                 account_name,
                 uid,
@@ -103,22 +103,24 @@ pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
             // account_name 跨账号唯一性提前校验（最终以 MAA 运行结果为准，§9.1）
             wd.save_account(&acc).map_err(anyhow::Error::from)?;
             let dups = wd.account_name_duplicates().map_err(anyhow::Error::from)?;
-            if let Some((name, ids)) = dups.iter().find(|(_, ids)| ids.contains(&id)) {
-                wd.remove_account(&id).map_err(anyhow::Error::from)?;
+            if let Some((name, keys)) = dups.iter().find(|(_, keys)| keys.contains(&key)) {
+                wd.remove_account(&key).map_err(anyhow::Error::from)?;
                 bail!(
                     "account_name {name:?} 已被账号 {} 使用：切号匹配串须唯一",
-                    ids.join(",")
+                    keys.join(",")
                 );
             }
-            println!("✓ 账号 {id} 已注册：{}", wd.account_file(&id).display());
-            println!("  下一步：arkreunion provision {id} --device <name>（人工登录一次，切号前提）");
+            println!("✓ 账号 {key} 已注册：{}", wd.account_file(&key).display());
+            println!(
+                "  下一步：arkreunion provision {key} --device <name>（人工登录一次，切号前提）"
+            );
             Ok(())
         }
         AccountCmd::List => {
             for acc in wd.load_all_accounts().map_err(anyhow::Error::from)? {
                 println!(
                     "{}\t{}\t{:?}\t{}\t{}",
-                    acc.id,
+                    acc.key,
                     acc.display_name,
                     acc.server,
                     acc.account_name,
@@ -127,33 +129,33 @@ pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
             }
             Ok(())
         }
-        AccountCmd::Show { id } => {
+        AccountCmd::Show { key } => {
             // 先 load 完成校验，再原样展示文件
-            wd.load_account(&id).map_err(anyhow::Error::from)?;
+            wd.load_account(&key).map_err(anyhow::Error::from)?;
             print!(
                 "{}",
-                std::fs::read_to_string(wd.account_file(&id)).map_err(|e| anyhow::anyhow!(e))?
+                std::fs::read_to_string(wd.account_file(&key)).map_err(|e| anyhow::anyhow!(e))?
             );
             Ok(())
         }
-        AccountCmd::Remove { id, yes } => {
+        AccountCmd::Remove { key, yes } => {
             if !yes {
-                bail!("删除账号 {id} 将连同其 maa/mower bundle 一起移除；确认请加 --yes");
+                bail!("删除账号 {key} 将连同其 maa/mower bundle 一起移除；确认请加 --yes");
             }
-            wd.remove_account(&id).map_err(anyhow::Error::from)?;
-            println!("✓ 账号 {id} 已删除");
+            wd.remove_account(&key).map_err(anyhow::Error::from)?;
+            println!("✓ 账号 {key} 已删除");
             Ok(())
         }
-        AccountCmd::Enable { id } => toggle(&wd, &id, true),
-        AccountCmd::Disable { id } => toggle(&wd, &id, false),
+        AccountCmd::Enable { key } => toggle(&wd, &key, true),
+        AccountCmd::Disable { key } => toggle(&wd, &key, false),
     }
 }
 
-fn toggle(wd: &Workdir, id: &str, enabled: bool) -> Result<()> {
-    let mut acc = wd.load_account(id).map_err(anyhow::Error::from)?;
+fn toggle(wd: &Workdir, key: &str, enabled: bool) -> Result<()> {
+    let mut acc = wd.load_account(key).map_err(anyhow::Error::from)?;
     acc.enabled = enabled;
     wd.save_account(&acc).map_err(anyhow::Error::from)?;
-    println!("✓ 账号 {id} 已{}", if enabled { "启用" } else { "停用" });
+    println!("✓ 账号 {key} 已{}", if enabled { "启用" } else { "停用" });
     Ok(())
 }
 

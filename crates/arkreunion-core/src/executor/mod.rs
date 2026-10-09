@@ -135,7 +135,7 @@ mod tests {
         let ctx = SessionCtx {
             session_id: 1,
             account: crate::model::Account {
-                id: "a".into(),
+                key: "a".into(),
                 display_name: "a".into(),
                 server: crate::model::Server::Official,
                 account_name: "1***2".into(),

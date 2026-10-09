@@ -124,11 +124,19 @@ fn default_true() -> bool {
     true
 }
 
-/// 账号（`accounts/<id>/account.toml`，设计文档 §6.1）。
+/// 账号（`accounts/<key>/account.toml`，设计文档 §6.1）。
+///
+/// 四个标识字段各司其职，勿混：
+/// - `key`：本地定位键（= 目录名 + CLI 参数），本项目内部概念
+/// - `display_name`：仅展示
+/// - `account_name`：MAA 切号匹配串（游戏侧标识）
+/// - `uid`：游戏 UID，切号后核验身份
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
-    /// 唯一标识（= 目录名，slug：小写字母/数字/`-`/`_`）
-    pub id: String,
+    /// 本地定位键（= 目录名，slug：小写字母/数字/`-`/`_`）。
+    /// `alias = "id"`：兼容早期以 `id` 命名的工作目录文件，落盘一律写 `key`。
+    #[serde(alias = "id")]
+    pub key: String,
     /// 展示名
     pub display_name: String,
     /// 服务器类型
@@ -154,7 +162,7 @@ pub struct Account {
 impl Account {
     /// 校验账号配置（slug、时间窗格式、优先级范围）。
     pub fn validate(&self) -> Result<()> {
-        validate_slug(&self.id, "账号 id")?;
+        validate_slug(&self.key, "账号 key")?;
         for w in &self.schedule.windows {
             w.validate()?;
         }
@@ -163,13 +171,13 @@ impl Account {
         {
             return Err(CoreError::Config(format!(
                 "账号 {} 的 uid {uid:?} 不合法：须为纯数字游戏 UID",
-                self.id
+                self.key
             )));
         }
         if self.schedule.priority > 100 {
             return Err(CoreError::Config(format!(
                 "账号 {} 的 priority={} 超出 0-100",
-                self.id, self.schedule.priority
+                self.key, self.schedule.priority
             )));
         }
         Ok(())
@@ -218,7 +226,7 @@ mod tests {
     #[test]
     fn account_toml_roundtrip() {
         let toml_src = r#"
-id = "main"
+key = "main"
 display_name = "主号"
 server = "official"
 account_name = "123****8901"
@@ -259,7 +267,7 @@ task = "roguelike"
     fn defaults_apply() {
         let acc: Account = toml::from_str(
             r#"
-id = "alt"
+key = "alt"
 display_name = "小号"
 server = "bilibili"
 account_name = "昵称"

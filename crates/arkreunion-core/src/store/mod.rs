@@ -12,7 +12,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub const SCHEMA_VERSION: i64 = 1;
+/// 当前 schema 版本。
+///
+/// - v1：初始表结构（`account_id` 列）
+/// - v2：`account_id` → `account_key`（Account.id → key 改名）
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// store 层错误。
 #[derive(Debug, thiserror::Error)]
@@ -44,7 +48,7 @@ pub fn now_ms() -> i64 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionRow {
     pub id: u64,
-    pub account_id: String,
+    pub account_key: String,
     pub device_name: String,
     pub executor: String,
     pub runner: Option<String>,
@@ -72,7 +76,7 @@ pub struct SessionEvent {
 #[derive(Debug, Clone)]
 pub struct SwitchLogEntry {
     pub ts_ms: i64,
-    pub account_id: String,
+    pub account_key: String,
     pub device_name: String,
     pub ok: bool,
     pub duration_ms: i64,
@@ -89,7 +93,7 @@ pub struct Store {
 /// 建会话入参（[`Store::create_session`]）。
 #[derive(Debug, Clone)]
 pub struct NewSession<'a> {
-    pub account_id: &'a str,
+    pub account_key: &'a str,
     pub device_name: &'a str,
     pub executor: &'a str,
     pub runner: Option<&'a str>,
@@ -100,6 +104,9 @@ pub struct NewSession<'a> {
 }
 
 /// schema v1 建表语句（设计文档 §14）。
+///
+/// 注意：此处保持 `account_id` 原样——v1→v2 迁移负责改名，新库直接建 v1 再迁移，
+/// 保证「建表」与「迁移」两条路径产生同一 schema。
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(
   key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -193,7 +200,9 @@ impl Store {
             .query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if cur > SCHEMA_VERSION {
             return Err(StoreError::Db(rusqlite::Error::InvalidParameterName(
-                format!("数据库 schema v{cur} 高于本程序支持的 v{SCHEMA_VERSION}：请升级 arkreunion"),
+                format!(
+                    "数据库 schema v{cur} 高于本程序支持的 v{SCHEMA_VERSION}：请升级 arkreunion"
+                ),
             )));
         }
         if cur < SCHEMA_VERSION {
@@ -205,10 +214,46 @@ impl Store {
                     [SCHEMA_VERSION.to_string()],
                 )?;
             }
+            if cur < 2 {
+                self.migrate_v1_to_v2()?;
+            }
             self.conn()
                 .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}; COMMIT"))?;
             tracing::info!(from = cur, to = SCHEMA_VERSION, "数据库 schema 迁移完成");
         }
+        Ok(())
+    }
+
+    /// v1 → v2：`account_id` 列更名为 `account_key`（Account.id → key 改名）。
+    ///
+    /// SQLite 3.25+ 支持 `ALTER TABLE … RENAME COLUMN`；主键与索引随列自动跟随。
+    fn migrate_v1_to_v2(&self) -> Result<()> {
+        // 旧索引名随列更名保留但语义已对（sessions 的索引恰以 account_id 为首列），
+        // 仅需改名以保持与 SCHEMA_V2 一致。
+        for (table, old_index, new_index) in [
+            (
+                "sessions",
+                "idx_sessions_account_state",
+                "idx_sessions_account_key_state",
+            ),
+            ("switch_log", "", ""),
+            ("logins", "", ""),
+            ("stats_daily", "", ""),
+        ] {
+            self.conn().execute_batch(&format!(
+                "ALTER TABLE {table} RENAME COLUMN account_id TO account_key"
+            ))?;
+            if !new_index.is_empty() {
+                self.conn()
+                    .execute_batch(&format!("DROP INDEX IF EXISTS {old_index}"))?;
+                self.conn().execute_batch(&format!(
+                    "CREATE INDEX IF NOT EXISTS {new_index} ON sessions(account_key, state)"
+                ))?;
+            }
+        }
+        tracing::info!(
+            "已迁移：sessions/switch_log/logins/stats_daily 的 account_id 列 → account_key"
+        );
         Ok(())
     }
 
@@ -217,11 +262,11 @@ impl Store {
     /// 创建会话，返回 id（started_at 记为当前时刻）。
     pub fn create_session(&self, s: NewSession<'_>) -> Result<u64> {
         self.conn().execute(
-            "INSERT INTO sessions(account_id, device_name, executor, runner, state, mower_port,
+            "INSERT INTO sessions(account_key, device_name, executor, runner, state, mower_port,
                                   slice_deadline_ms, max_runtime_deadline_ms, started_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
-                s.account_id,
+                s.account_key,
                 s.device_name,
                 s.executor,
                 s.runner,
@@ -247,7 +292,7 @@ impl Store {
     fn row_to_session(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         Ok(SessionRow {
             id: r.get::<_, i64>(0)? as u64,
-            account_id: r.get(1)?,
+            account_key: r.get(1)?,
             device_name: r.get(2)?,
             executor: r.get(3)?,
             runner: r.get(4)?,
@@ -263,7 +308,7 @@ impl Store {
         })
     }
 
-    const SESSION_COLS: &str = "id, account_id, device_name, executor, runner, state, mower_port,\
+    const SESSION_COLS: &str = "id, account_key, device_name, executor, runner, state, mower_port,\
                          locator, slice_deadline_ms, max_runtime_deadline_ms, started_at_ms,\
                          ended_at_ms, outcome, error";
 
@@ -292,15 +337,15 @@ impl Store {
     }
 
     /// 账号的活跃会话（任意设备；一账号至多一个活跃会话，§6.5）。
-    pub fn active_session_by_account(&self, account_id: &str) -> Result<Option<SessionRow>> {
+    pub fn active_session_by_account_key(&self, account_key: &str) -> Result<Option<SessionRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {} FROM sessions WHERE account_id = ?1 AND state IN
+            "SELECT {} FROM sessions WHERE account_key = ?1 AND state IN
              ('created','queued','switching','running','draining')",
             Self::SESSION_COLS
         ))?;
         Ok(stmt
-            .query_row([account_id], Self::row_to_session)
+            .query_row([account_key], Self::row_to_session)
             .optional()?)
     }
 
@@ -383,11 +428,11 @@ impl Store {
     }
 
     /// 账号自 `since_ms` 以来的会话数（daily_guarantee 告警用）。
-    pub fn sessions_cnt_since(&self, account_id: &str, since_ms: i64) -> Result<u32> {
+    pub fn sessions_cnt_since(&self, account_key: &str, since_ms: i64) -> Result<u32> {
         let conn = self.conn();
         Ok(conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE account_id = ?1 AND started_at_ms >= ?2",
-            params![account_id, since_ms],
+            "SELECT COUNT(*) FROM sessions WHERE account_key = ?1 AND started_at_ms >= ?2",
+            params![account_key, since_ms],
             |r| r.get::<_, i64>(0).map(|v| v as u32),
         )?)
     }
@@ -547,34 +592,34 @@ impl Store {
     // ---------- logins（亲和矩阵，§7.3/§9.2） ----------
 
     /// 记录「账号已在设备登录过」；保留 first_at。
-    pub fn record_login(&self, account_id: &str, device_name: &str, status: &str) -> Result<()> {
+    pub fn record_login(&self, account_key: &str, device_name: &str, status: &str) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO logins(account_id, device_name, status, first_at_ms, last_verified_at_ms)
+            "INSERT INTO logins(account_key, device_name, status, first_at_ms, last_verified_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?4)
-             ON CONFLICT(account_id, device_name)
+             ON CONFLICT(account_key, device_name)
              DO UPDATE SET status = ?3, last_verified_at_ms = ?4",
-            params![account_id, device_name, status, now_ms()],
+            params![account_key, device_name, status, now_ms()],
         )?;
         Ok(())
     }
 
-    pub fn login_status(&self, account_id: &str, device_name: &str) -> Result<Option<String>> {
+    pub fn login_status(&self, account_key: &str, device_name: &str) -> Result<Option<String>> {
         Ok(self
             .conn()
             .query_row(
-                "SELECT status FROM logins WHERE account_id = ?1 AND device_name = ?2",
-                params![account_id, device_name],
+                "SELECT status FROM logins WHERE account_key = ?1 AND device_name = ?2",
+                params![account_key, device_name],
                 |r| r.get(0),
             )
             .optional()?)
     }
 
-    pub fn list_logins(&self, account_id: &str) -> Result<Vec<(String, String)>> {
+    pub fn list_logins(&self, account_key: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT device_name, status FROM logins WHERE account_id = ?1 ORDER BY device_name",
+            "SELECT device_name, status FROM logins WHERE account_key = ?1 ORDER BY device_name",
         )?;
-        let rows = stmt.query_map([account_id], |r| {
+        let rows = stmt.query_map([account_key], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -584,11 +629,11 @@ impl Store {
 
     pub fn insert_switch_log(&self, e: &SwitchLogEntry) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO switch_log(ts_ms, account_id, device_name, ok, duration_ms, retries, maa_log_excerpt)
+            "INSERT INTO switch_log(ts_ms, account_key, device_name, ok, duration_ms, retries, maa_log_excerpt)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 e.ts_ms,
-                e.account_id,
+                e.account_key,
                 e.device_name,
                 e.ok as i64,
                 e.duration_ms,
@@ -644,11 +689,41 @@ mod tests {
     }
 
     #[test]
+    fn v1数据库迁移后列名与数据保留() {
+        // 造一个 v1 老库（含 account_id 列与数据），验证迁移到 v2 后可读
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("state/arkreunion.db");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch(
+                "INSERT INTO sessions(account_id, device_name, executor, state, started_at_ms)
+                 VALUES ('main', 'd1', 'mower', 'finished', 1000)",
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA user_version = 1").unwrap();
+        }
+        let store = Store::open(&db).unwrap();
+        let rows = store.list_sessions(10).unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r.device_name == "d1")
+            .expect("老数据应保留");
+        assert_eq!(row.account_key, "main", "account_id → account_key 后值不变");
+        let v: i64 = Connection::open(&db)
+            .unwrap()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
     fn session_lifecycle_and_unique_active() {
         let store = Store::open_in_memory().unwrap();
         let id = store
             .create_session(crate::store::NewSession {
-                account_id: "a",
+                account_key: "a",
                 device_name: "d",
                 executor: "mower",
                 runner: Some("process"),
@@ -660,7 +735,11 @@ mod tests {
             .unwrap();
         assert_eq!(store.active_session_by_device("d").unwrap().unwrap().id, id);
         assert_eq!(
-            store.active_session_by_account("a").unwrap().unwrap().id,
+            store
+                .active_session_by_account_key("a")
+                .unwrap()
+                .unwrap()
+                .id,
             id
         );
 
@@ -715,40 +794,60 @@ mod tests {
     #[test]
     fn port_allocation_skips_used_and_probe_bind() {
         let store = Store::open_in_memory().unwrap();
-        // 预占一个端口
+        // 端口段运行时探测：硬编码 58100-58103 会与本机在跑的 mower/其它测试冲突
+        // （该测试曾在原代码上 4/6 次失败）。这里取一段当前确实空闲的连续端口。
+        let base = free_port_base(4).expect("找不到 4 段连续空闲端口");
+        let range = [base, base + 3];
+
+        // 预占段首端口（模拟已记账）
         store
-            .conn().execute(
-                "INSERT INTO port_allocations(port, holder, kind, allocated_at_ms) VALUES (58100, 'other', 'mower_webview', 0)",
-                [],
+            .conn()
+            .execute(
+                "INSERT INTO port_allocations(port, holder, kind, allocated_at_ms) VALUES (?1, 'other', 'mower_webview', 0)",
+                [base as i64],
             )
             .unwrap();
-        // 系统层占用 58101
-        let hold = std::net::TcpListener::bind(("127.0.0.1", 58101)).unwrap();
+        // 段次端口（base+1）被系统层占用
+        let hold = std::net::TcpListener::bind(("127.0.0.1", base + 1)).unwrap();
+
         let p1 = store
-            .alloc_port("mower_webview", "session:1", [58100, 58103])
+            .alloc_port("mower_webview", "session:1", range)
             .unwrap();
-        assert_eq!(p1, 58102, "跳过记账 58100 与被绑 58101");
+        assert_eq!(p1, base + 2, "跳过记账段首与被绑的段次");
         let p2 = store
-            .alloc_port("mower_webview", "session:2", [58100, 58103])
+            .alloc_port("mower_webview", "session:2", range)
             .unwrap();
-        assert_eq!(p2, 58103);
-        // 段耗尽（58100 记账 / 58101 被绑 / 58102+58103 记账）
+        assert_eq!(p2, base + 3);
+
+        // 段耗尽（段首记账 / 段次被绑 / 段三段四已记账）
         let err = store
-            .alloc_port("mower_webview", "session:3", [58100, 58103])
+            .alloc_port("mower_webview", "session:3", range)
             .unwrap_err();
-        assert!(matches!(
-            err,
-            StoreError::PortExhausted { a: 58100, b: 58103 }
-        ));
+        assert!(matches!(err, StoreError::PortExhausted { .. }));
+
         drop(hold);
-        // 释放后可复用：58101 先被探测到
+        // 释放后可复用：段次端口先被探测到
         assert_eq!(store.release_ports("session:1").unwrap(), 1);
         assert_eq!(
             store
-                .alloc_port("mower_webview", "session:4", [58100, 58103])
+                .alloc_port("mower_webview", "session:4", range)
                 .unwrap(),
-            58101
+            base + 1
         );
+    }
+
+    /// 找一段连续 `n` 个当前可绑定的端口（跳过系统保留与在用端口）。
+    fn free_port_base(n: u16) -> Option<u16> {
+        for base in 49152..60000u16.saturating_sub(n) {
+            if (base..base + n).all(|p| {
+                std::net::TcpListener::bind(("127.0.0.1", p))
+                    .map(drop)
+                    .is_ok()
+            }) {
+                return Some(base);
+            }
+        }
+        None
     }
 
     #[test]
@@ -758,7 +857,7 @@ mod tests {
         store
             .conn()
             .execute(
-                "UPDATE logins SET first_at_ms = 1000 WHERE account_id='a'",
+                "UPDATE logins SET first_at_ms = 1000 WHERE account_key='a'",
                 [],
             )
             .unwrap();
@@ -766,7 +865,7 @@ mod tests {
         let first: i64 = store
             .conn()
             .query_row(
-                "SELECT first_at_ms FROM logins WHERE account_id='a'",
+                "SELECT first_at_ms FROM logins WHERE account_key='a'",
                 [],
                 |r| r.get(0),
             )
@@ -786,7 +885,7 @@ mod tests {
         store
             .insert_switch_log(&SwitchLogEntry {
                 ts_ms: now_ms(),
-                account_id: "a".into(),
+                account_key: "a".into(),
                 device_name: "d".into(),
                 ok: true,
                 duration_ms: 91234,

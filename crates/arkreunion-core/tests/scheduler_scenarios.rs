@@ -80,7 +80,7 @@ fn test_cfg() -> AkopsConfig {
 
 fn account_with_window(id: &str, priority: u8) -> Account {
     Account {
-        id: id.into(),
+        key: id.into(),
         display_name: id.into(),
         server: Server::Official,
         account_name: format!("{id}-138****0000"),
@@ -126,7 +126,7 @@ fn bench(accounts: &[Account]) -> Bench {
     let store = Arc::new(Store::open(&wd.db_path()).unwrap());
     for a in accounts {
         wd.save_account(a).unwrap();
-        store.record_login(&a.id, "d1", "provisioned").unwrap();
+        store.record_login(&a.key, "d1", "provisioned").unwrap();
     }
     Bench { dir, wd, store }
 }
@@ -208,7 +208,7 @@ async fn rotation_two_accounts_alternate_and_finish() {
     );
     if finished.len() >= 2 {
         assert_ne!(
-            finished[0].account_id, finished[1].account_id,
+            finished[0].account_key, finished[1].account_key,
             "同优先级应轮转交替：{finished:?}"
         );
     }

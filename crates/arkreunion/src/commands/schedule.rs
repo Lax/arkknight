@@ -97,7 +97,7 @@ async fn show(wd: &Workdir) -> Result<()> {
         for r in rows {
             println!(
                 "  #{} {} {} {} outcome={:?}",
-                r.id, r.state, r.account_id, r.device_name, r.outcome
+                r.id, r.state, r.account_key, r.device_name, r.outcome
             );
         }
     }

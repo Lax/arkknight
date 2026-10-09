@@ -29,7 +29,7 @@ pub(crate) async fn run(wd: Workdir) -> Result<()> {
         println!(
             "  {} {:<14} {:<9} {}  窗口[{}]",
             if a.enabled { "✓" } else { "×" },
-            a.id,
+            a.key,
             format!("{:?}", a.server).to_lowercase(),
             a.account_name,
             if windows.is_empty() {

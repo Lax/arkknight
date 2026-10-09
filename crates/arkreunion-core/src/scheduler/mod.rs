@@ -214,17 +214,17 @@ pub async fn run_engine(
             }
             continue;
         };
-        state.ready_since.remove(&account.id);
+        state.ready_since.remove(&account.key);
 
         tracing::info!(
-            account = %account.id,
+            account = %account.key,
             ?executor_kind,
             ?task,
             "选中账号开会话（priority={}）", account.schedule.priority
         );
         handle.events.emit(
             "session_selected",
-            &serde_json::json!({"account_id": account.id, "executor": match executor_kind {
+            &serde_json::json!({"account_key": account.key, "executor": match executor_kind {
                 ExecutorKind::Mower => "mower",
                 ExecutorKind::Maa => "maa",
             }}),
@@ -290,7 +290,7 @@ pub async fn run_engine(
         // 退避记账（§10.2）：失败指数退避；成功清零
         let b = &deps.shared.cfg.scheduler.backoff;
         if result.ok && matches!(result.outcome, crate::model::SessionOutcome::Completed) {
-            state.backoff.remove(&account.id);
+            state.backoff.remove(&account.key);
         }
         let is_failure = !result.ok
             || matches!(
@@ -302,7 +302,7 @@ pub async fn run_engine(
         if is_failure {
             let entry = state
                 .backoff
-                .entry(account.id.clone())
+                .entry(account.key.clone())
                 .or_insert(BackoffState {
                     consecutive_failures: 0,
                     until: tokio::time::Instant::now(),
@@ -315,14 +315,14 @@ pub async fn run_engine(
             );
             entry.until = tokio::time::Instant::now() + delay;
             tracing::warn!(
-                account = %account.id,
+                account = %account.key,
                 failures = entry.consecutive_failures,
                 ?delay,
                 outcome = result.outcome.name(),
                 "账号进入退避"
             );
         } else if result.ok {
-            state.backoff.remove(&account.id);
+            state.backoff.remove(&account.key);
         }
 
         // 会话后的空调节流（保持停止响应性）
@@ -373,7 +373,7 @@ fn pick_next(
         }
         if state
             .backoff
-            .get(&account.id)
+            .get(&account.key)
             .map(|b| b.until > tokio::time::Instant::now())
             .unwrap_or(false)
         {
@@ -382,7 +382,7 @@ fn pick_next(
         if deps
             .shared
             .store
-            .active_session_by_account(&account.id)
+            .active_session_by_account_key(&account.key)
             .ok()
             .flatten()
             .is_some()
@@ -400,12 +400,12 @@ fn pick_next(
         };
         // maa 窗口必须有任务名（模型校验兜底；手改文件绕过校验时跳过）
         if executor_kind == ExecutorKind::Maa && task.unwrap_or("").is_empty() {
-            tracing::warn!(account = %account.id, "maa 窗口缺 task，跳过");
+            tracing::warn!(account = %account.key, "maa 窗口缺 task，跳过");
             continue;
         }
         let ready_since = *state
             .ready_since
-            .entry(account.id.clone())
+            .entry(account.key.clone())
             .or_insert(tokio::time::Instant::now());
         let slice = account
             .schedule
@@ -471,19 +471,19 @@ fn check_daily_guarantee(
         if !all_ended {
             continue;
         }
-        let key = (day_key.clone(), account.id.clone());
+        let key = (day_key.clone(), account.key.clone());
         if state.guarantee_warned.contains(&key) {
             continue;
         }
         let cnt = deps
             .shared
             .store
-            .sessions_cnt_since(&account.id, day_start)
+            .sessions_cnt_since(&account.key, day_start)
             .unwrap_or(0);
         if cnt == 0 {
             state.guarantee_warned.insert(key);
             tracing::warn!(
-                account = %account.id,
+                account = %account.key,
                 game_day = %day_key,
                 "daily_guarantee：本游戏日有窗口但未运行任何会话（M1 仅告警，不补跑）"
             );

@@ -75,7 +75,7 @@ onBeforeUnmount(() => {
           >
             #{{ s.id }} {{ s.state }}
           </n-tag>
-          <n-text strong>{{ s.account_id }}</n-text>
+          <n-text strong>{{ s.account_key }}</n-text>
           <span style="color: gray">{{ s.executor }} @ {{ s.device_name }}</span>
           <span v-if="s.mower_port" style="color: gray">:{{ s.mower_port }}</span>
           <span style="color: gray">{{ fmtMs(s.started_at_ms) }}</span>

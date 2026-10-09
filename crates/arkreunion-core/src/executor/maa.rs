@@ -49,7 +49,7 @@ impl Executor for MaaCliExecutor {
         let config_dir = ctx
             .workdir
             .join("accounts")
-            .join(&ctx.account.id)
+            .join(&ctx.account.key)
             .join("maa");
         if !config_dir.is_dir() {
             return Err(ExecutorError::Start(format!(
@@ -123,7 +123,7 @@ mod tests {
         SessionCtx {
             session_id: 1,
             account: Account {
-                id: "main".into(),
+                key: "main".into(),
                 display_name: "m".into(),
                 server: Server::Official,
                 account_name: "1***2".into(),

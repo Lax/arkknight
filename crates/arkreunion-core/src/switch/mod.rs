@@ -101,7 +101,7 @@ pub async fn execute_switch(plan: &SwitchPlan<'_>) -> SwitchOutcome {
     .await;
 
     // 物化 MAA 配置（切号从宿主发起 → Process 视角地址，§9.1）
-    let maa_dir = plan.wd.account_dir(&account.id).join("maa");
+    let maa_dir = plan.wd.account_dir(&account.key).join("maa");
     let endpoints = crate::device::DeviceEndpoints {
         host_adb: device.connection.host_adb.clone(),
         docker_adb: device.connection.docker_adb.clone(),
@@ -203,16 +203,16 @@ pub async fn execute_switch(plan: &SwitchPlan<'_>) -> SwitchOutcome {
 pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
     let account = &ctx.account;
     let device = &ctx.device;
-    let holder = format!("switch:{}", account.id);
+    let holder = format!("switch:{}", account.key);
 
     // 亲和前提（§9.2）：仅对已预置的 (账号, 设备) 切号
-    match ctx.store.login_status(&account.id, &device.name) {
+    match ctx.store.login_status(&account.key, &device.name) {
         Ok(Some(status)) if status == "provisioned" => {}
         Ok(_) => {
             return Err(CoreError::Config(format!(
-                "账号 {account_id} 未在设备 {device_name} 预置（MAA 只能选择该设备已登录过的账号，§9.2）：\
-                 先运行 arkreunion provision {account_id} --device {device_name}",
-                account_id = account.id,
+                "账号 {account_key} 未在设备 {device_name} 预置（MAA 只能选择该设备已登录过的账号，§9.2）：\
+                 先运行 arkreunion provision {account_key} --device {device_name}",
+                account_key = account.key,
                 device_name = device.name
             )));
         }
@@ -252,7 +252,7 @@ pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
     let session_id = ctx
         .store
         .create_session(crate::store::NewSession {
-            account_id: &account.id,
+            account_key: &account.key,
             device_name: &device.name,
             executor: "maa",
             runner: Some("process"),
@@ -262,7 +262,7 @@ pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
             max_runtime_deadline_ms: None,
         })
         .map_err(|e| CoreError::Other(e.to_string()))?;
-    tracing::info!(account = %account.id, device = %device.name, session = session_id, "开始切号（INV-1: maa run startup）");
+    tracing::info!(account = %account.key, device = %device.name, session = session_id, "开始切号（INV-1: maa run startup）");
 
     let outcome = execute_switch(&SwitchPlan {
         wd: &ctx.wd,
@@ -284,7 +284,7 @@ pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
     // 记 switch_log + 会话终态
     let _ = ctx.store.insert_switch_log(&SwitchLogEntry {
         ts_ms: crate::store::now_ms(),
-        account_id: account.id.clone(),
+        account_key: account.key.clone(),
         device_name: device.name.clone(),
         ok,
         duration_ms,
@@ -299,7 +299,7 @@ pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
             None,
             "switch_succeeded",
         );
-        tracing::info!(account = %account.id, device = %device.name, "切号成功（耗时 {duration_ms}ms）");
+        tracing::info!(account = %account.key, device = %device.name, "切号成功（耗时 {duration_ms}ms）");
     } else {
         let _ = ctx.store.finish_session(
             session_id,
@@ -308,7 +308,7 @@ pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
             last_error.as_deref(),
             "switch_failed",
         );
-        tracing::error!(account = %account.id, device = %device.name, "切号失败（重试 {attempts} 次耗尽）");
+        tracing::error!(account = %account.key, device = %device.name, "切号失败（重试 {attempts} 次耗尽）");
     }
     released.done = true;
     let _ = ctx.store.release_lease(&device.name, &holder);
@@ -464,7 +464,7 @@ mod tests {
 
     fn account(id: &str, name: &str) -> Account {
         Account {
-            id: id.into(),
+            key: id.into(),
             display_name: id.into(),
             server: Server::Official,
             account_name: name.into(),
@@ -634,7 +634,7 @@ mod tests {
         // 活跃会话（无租约行：如 daemon 崩溃后仅剩会话记录的残态）
         store
             .create_session(crate::store::NewSession {
-                account_id: "other",
+                account_key: "other",
                 device_name: "d1",
                 executor: "mower",
                 runner: Some("process"),

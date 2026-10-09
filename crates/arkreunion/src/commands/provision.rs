@@ -15,13 +15,13 @@ pub(crate) async fn run(
     wd: Workdir,
     _guard: WorkdirGuard,
     store: Arc<Store>,
-    account_id: String,
+    account_key: String,
     device: Option<String>,
 ) -> Result<()> {
     let cfg = wd.load_config()?;
-    let account = wd.load_account(&account_id)?;
+    let account = wd.load_account(&account_key)?;
     let dev = resolve_device(&wd, device.as_deref())?;
-    let holder = format!("provision:{}", account.id);
+    let holder = format!("provision:{}", account.key);
 
     // 设备在线 + 游戏安装检查
     let backend = build_backend(&dev, &cfg.paths.adb_path_expanded())?;
@@ -49,7 +49,7 @@ pub(crate) async fn run(
     };
 
     println!();
-    println!("=== 账号预置：{} @ {} ===", account.id, dev.name);
+    println!("=== 账号预置：{} @ {} ===", account.key, dev.name);
     println!(
         "目标：在该设备上人工登录一次账号「{}」（{}）",
         account.display_name, account.account_name
@@ -83,7 +83,7 @@ pub(crate) async fn run(
         if !uid.chars().all(|c| c.is_ascii_digit()) {
             anyhow::bail!("UID 须为纯数字：{uid:?}");
         }
-        let mut acc = wd.load_account(&account.id).map_err(anyhow::Error::from)?;
+        let mut acc = wd.load_account(&account.key).map_err(anyhow::Error::from)?;
         acc.uid = Some(uid.clone());
         wd.save_account(&acc).map_err(anyhow::Error::from)?;
         println!("✓ 已记录 UID {uid}（切号后将自动核验，§9.4）");
@@ -97,15 +97,15 @@ pub(crate) async fn run(
         anyhow::bail!("设备 {} 已离线，预置未记录；请重试", dev.name);
     }
     store
-        .record_login(&account.id, &dev.name, "provisioned")
+        .record_login(&account.key, &dev.name, "provisioned")
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!(
         "✓ 已记录 logins({} @ {} = provisioned)",
-        account.id, dev.name
+        account.key, dev.name
     );
     println!(
         "  下一步：arkreunion switch {} --device {}   # 验证自动切号",
-        account.id, dev.name
+        account.key, dev.name
     );
 
     drop(released);

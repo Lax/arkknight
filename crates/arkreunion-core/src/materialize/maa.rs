@@ -162,7 +162,7 @@ mod tests {
 
     fn account(server: Server, name: &str) -> Account {
         Account {
-            id: "main".into(),
+            key: "main".into(),
             display_name: "主号".into(),
             server,
             account_name: name.into(),
