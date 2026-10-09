@@ -156,6 +156,12 @@ pub struct SchedulerConfig {
     pub max_switch_retries: u32,
     /// 每账号每日至少一个完整时间片
     pub daily_guarantee: bool,
+    /// 会话优雅停止等待（超时强杀，附录 D）
+    pub drain_grace: HumanDuration,
+    /// 执行器健康探测间隔
+    pub watchdog_interval: HumanDuration,
+    /// 连续失败次数阈值 → Draining（§10.2 看门狗）
+    pub watchdog_threshold: u32,
     pub backoff: BackoffConfig,
     /// M3 跨账号交叉调度开关
     pub cross_account: bool,
@@ -170,6 +176,9 @@ impl Default for SchedulerConfig {
             max_session_runtime: HumanDuration::parse("6h").unwrap(),
             max_switch_retries: 2,
             daily_guarantee: true,
+            drain_grace: HumanDuration::parse("2m").unwrap(),
+            watchdog_interval: HumanDuration::parse("30s").unwrap(),
+            watchdog_threshold: 3,
             backoff: BackoffConfig::default(),
             cross_account: false,
         }

@@ -2,8 +2,8 @@
 //!
 //! 已实装：init/doctor/status/account/device/completions（任务 1/2）、
 //! switch/provision/maa（任务 4/5）、session（任务 6 前半，ProcessRunner）。
-//! 剩余占位：schedule（任务 7）、mower update（任务 6 后半）、server（任务 8）、
-//! export/import（任务 9）、migrate（随 store 交付后移除占位）。
+//! 剩余占位：mower update（任务 6 后半）、export/import（任务 9）、
+//! migrate（随 store 交付后移除占位）。调度器（任务 7）与 server 骨架（任务 8 前半）已实装。
 
 use clap::Subcommand;
 
@@ -11,16 +11,6 @@ fn todo(task: &str, what: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "`{what}` 尚未实现——属 {task}。\n进度与交付顺序见 docs/akops-design.md §20（里程碑）"
     )
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ScheduleCmd {
-    /// 查看调度器状态与队列
-    Show,
-    /// 暂停自动调度（运行中会话不受影响）
-    Pause,
-    /// 恢复自动调度
-    Resume,
 }
 
 #[derive(Subcommand, Debug)]
@@ -36,21 +26,6 @@ pub enum MowerCmd {
     },
     /// 显示检出版本
     Version,
-}
-
-pub(crate) fn server() -> anyhow::Result<()> {
-    Err(todo(
-        "M1 任务 8（控制台 v1 + API：axum + rust-embed + OpenAPI + token 鉴权）",
-        "akops server",
-    ))
-}
-
-pub(crate) fn schedule(cmd: ScheduleCmd) -> anyhow::Result<()> {
-    let _ = cmd;
-    Err(todo(
-        "M1 任务 7（调度器 v1：时间窗 + 优先级 + 双超时 + 看门狗 + 退避）",
-        "akops schedule",
-    ))
 }
 
 pub(crate) fn mower(cmd: MowerCmd) -> anyhow::Result<()> {

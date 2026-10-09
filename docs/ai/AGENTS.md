@@ -36,11 +36,18 @@ docs/                   本文档树
   **provision**（投屏指引 + 回车确认 + logins 记录 + 租约互斥，任务 5）；
   **MowerProcessExecutor + session start/stop/list/logs**（端口分配 + conf 白名单 patch + 深链 +
   日志归档 logs/sessions/<id>.log + POST /stop 优雅停止→pid 兜底强杀；任务 6 前半）
-- 进行中/未做：任务 6 后半（**DockerRunner（bollard）** + mower update UpdatePlan）→ 任务 7（调度器）→
-  任务 8（server+控制台）→ 任务 9（导入导出）
+- **调度器 v1（任务 7，2026-10-09）**：scheduler/{engine,session,window}——游戏日界时间窗纯函数、
+  就绪判定/队列（priority desc + FIFO）、指数退避（内存态）、双超时+看门狗（MonitorParams select 环）、
+  崩溃恢复（启动全清租约+标记中断会话）、会话独立 task + 引擎 stop 注入（防死锁）、
+  `schedule pause/resume` 经 daemon API、SIGINT/SIGTERM 优雅关停；FakeExecutor 五场景测试
+- **server 骨架（任务 8 前半）**：`akops server`=持锁 daemon + daemon.json + 最小 API
+  （status/pause/resume/sessions/sessions/{id}/drain，token 鉴权 Bearer/?token=）+
+  schedule CLI 经 API 生效；控制台/OpenAPI/WS 仍属任务 8
+- 进行中/未做：任务 6 后半（**DockerRunner（bollard）** + mower update UpdatePlan）→
+  任务 8（控制台 v1 + WS + OpenAPI）→ 任务 9（导入导出）
 - 实现备注：真实环境切号验证依赖 provision 后的账号（需人工登录），当前以 fake maa/adb 冒烟 +
   真机 device test/doctor 覆盖；`maa run --dry-run` 可用于无设备校验物化配置
-- 测试：`cargo test`（54 单测 + 4 golden）；golden 更新：`AKOPS_UPDATE_GOLDEN=1 cargo test -p akops-core --test golden`
+- 测试：`cargo test`（59 单测 + 4 golden + 5 调度场景）；golden 更新：`AKOPS_UPDATE_GOLDEN=1 cargo test -p akops-core --test golden`
 
 ## 硬性不变量（违反即拒改）
 

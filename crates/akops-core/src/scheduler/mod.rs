@@ -1,25 +1,449 @@
 //! 调度器（§10）：策略引擎 → 会话队列 → 设备租约 → 生命周期管理。
 //!
-//! **M1 任务 7 交付**。当前仅导出领域词汇；设计要点备忘：
-//! - 三期演进：M1 单设备串行+静态时间窗；M2 多设备池+水位扩容；M3 事件驱动交叉
-//! - 状态机见 [`crate::model::SessionState`]；任何迁移写 `session_events`
-//! - 双超时：`slice_deadline`（正常轮转）与 `max_runtime_deadline`（硬上限）
-//! - 看门狗：执行器 health 连续 N 次失败 → Draining → 按退避重排
-//! - 退避：`{initial:5m, factor:2, max:60m}` 指数退避（失败不得空转重试）
-//! - 设备租约：SQLite 事务获取；daemon 崩溃恢复按心跳超时回收孤儿租约
-//! - 单设备排队：`(priority desc, 就绪等待时长 desc)`，同优先级 FIFO
-//! - 就绪判定（§10.3）：enabled ∧ 处于时间窗 ∧ 无活跃会话 ∧ 未在退避；
-//!   时间窗按游戏日界（官服 UTC-4 04:00）计算，不用本地零点
+//! M1 = 单设备串行 + 静态时间窗（设计文档 §10.1）：
+//! - 就绪判定（§10.3）：enabled ∧ 处于时间窗 ∧ 无活跃会话 ∧ 未在退避
+//! - 队列：`(priority desc, 就绪等待时长 desc)`，同优先级 FIFO
+//! - 双超时 + 看门狗 + 退避：见 [`session`] 与 §10.2
+//! - 退避状态为 daemon 内存态（重启清零，事件经 session_events 留痕）
+//! - `daily_guarantee` M1 仅告警（游戏日内有窗口但零会话时记录日志）
+//!
+//! 引擎为单任务主循环：选号 → [`session::run_session_flow`]（内联 await）→
+//! 退避记账 → 下一轮。多设备池（M2）将改为 per-device worker。
 
-pub use crate::model::{ExecutorKind, RunnerKind, SessionOutcome, SessionState};
+pub mod session;
+pub mod window;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::watch;
+
+use crate::config::{AkopsConfig, Workdir};
+use crate::model::{Account, Device, ExecutorKind, ScheduledExecutor};
+use crate::store::Store;
+
+pub use session::{ActiveSlot, ActiveStop, ExecutorFactory, SessionRunResult, StopReason};
+
+/// 单设备调度引擎的依赖集（全部可注入以便测试）。
+pub struct EngineDeps {
+    pub wd: Workdir,
+    pub cfg: AkopsConfig,
+    pub store: Arc<Store>,
+    pub device: Device,
+    pub factory: ExecutorFactory,
+    /// 主循环空转轮询间隔
+    pub tick: Duration,
+    /// 切号单次尝试超时
+    pub switch_timeout: Duration,
+    /// maa-cli 可执行文件（默认 PATH 中的 `maa`；测试注入假脚本）
+    pub maa_bin: std::path::PathBuf,
+    /// 测试用：覆盖调度退避初始间隔（None 用配置值）
+    pub backoff_override: Option<Duration>,
+}
+
+/// 引擎控制句柄（server / 测试持有）。
+#[derive(Clone)]
+pub struct EngineHandle {
+    /// 暂停自动调度（运行中会话不受影响，§15 schedule pause）
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
+    /// 关停信号
+    pub stop_tx: watch::Sender<bool>,
+    /// 活跃会话槽（手动 drain 入口）
+    pub active: ActiveSlot,
+}
+
+impl EngineHandle {
+    pub fn new() -> (watch::Receiver<bool>, EngineHandle) {
+        let (stop_tx, stop_rx) = watch::channel(false);
+        (
+            stop_rx,
+            EngineHandle {
+                pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                stop_tx,
+                active: ActiveSlot::default(),
+            },
+        )
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.pause.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Default for EngineHandle {
+    fn default() -> Self {
+        Self::new().1
+    }
+}
+
+/// 退避记账（内存态，§10.2）。
+#[derive(Debug, Clone)]
+struct BackoffState {
+    consecutive_failures: u32,
+    until: tokio::time::Instant,
+}
+
+/// 引擎运行态（跨轮次记忆）。
+#[derive(Default)]
+struct EngineState {
+    backoff: HashMap<String, BackoffState>,
+    ready_since: HashMap<String, tokio::time::Instant>,
+    /// 已告警的 (游戏日键, 账号)——daily_guarantee 每组合只告警一次
+    guarantee_warned: std::collections::HashSet<(String, String)>,
+}
+
+/// 启动前的崩溃恢复（§10.2：daemon 崩溃后重启）。
+/// 单写者（D7）：daemon 持锁启动时，**任何现存租约必属已死进程**——全部清收；
+/// 非终态会话标记中断（outcome=executor_crash）。
+pub fn recover_on_start(store: &Store) -> (usize, usize) {
+    let orphans = store.recover_all_leases().unwrap_or_default();
+    let mut interrupted = 0usize;
+    if let Ok(rows) = store.list_sessions(500) {
+        for s in rows {
+            if matches!(
+                s.state.as_str(),
+                "created" | "queued" | "switching" | "running" | "draining"
+            ) {
+                let _ = store.finish_session(
+                    s.id,
+                    "failed",
+                    "executor_crash",
+                    Some("daemon 重启，会话中断恢复"),
+                    "recovered_interrupted",
+                );
+                interrupted += 1;
+            }
+        }
+    }
+    if !orphans.is_empty() {
+        tracing::warn!("回收孤儿租约：{}", orphans.join(", "));
+    }
+    if interrupted > 0 {
+        tracing::warn!("标记中断会话 {interrupted} 个");
+    }
+    (orphans.len(), interrupted)
+}
+
+/// 引擎主循环（阻塞至 stop 信号；server 与测试直接 tokio::spawn）。
+pub async fn run_engine(
+    deps: EngineDeps,
+    handle: EngineHandle,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    tracing::info!(device = %deps.device.name, "调度引擎启动（单设备 M1）");
+    recover_on_start(&deps.store);
+    let mut state = EngineState::default();
+
+    loop {
+        // 先干活后节流：启动即尝试调度；停止信号在循环末尾的 select 中及时响应
+        if *stop_rx.borrow() {
+            break;
+        }
+        if handle.is_paused() {
+            tokio::select! {
+                res = stop_rx.changed() => {
+                    if res.is_err() || *stop_rx.borrow() { break; }
+                }
+                _ = tokio::time::sleep(deps.tick) => {}
+            }
+            continue;
+        }
+
+        // 单设备互斥：设备上有活跃会话（例如手动 session start）则让路
+        if let Ok(Some(s)) = deps.store.active_session_by_device(&deps.device.name) {
+            tracing::debug!(session = s.id, "设备被会话占用，让路");
+            continue;
+        }
+
+        let accounts = match deps.wd.load_all_accounts() {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!("读取账号失败：{e}");
+                tokio::time::sleep(deps.tick).await;
+                continue;
+            }
+        };
+        let now = chrono::Local::now();
+        let candidate = pick_next(&deps, &mut state, &accounts, now);
+        let Some((account, executor_kind, task, slice)) = candidate else {
+            check_daily_guarantee(&deps, &mut state, &accounts, now);
+            tokio::select! {
+                res = stop_rx.changed() => {
+                    if res.is_err() || *stop_rx.borrow() { break; }
+                }
+                _ = tokio::time::sleep(deps.tick) => {}
+            }
+            continue;
+        };
+        state.ready_since.remove(&account.id);
+
+        tracing::info!(
+            account = %account.id,
+            ?executor_kind,
+            ?task,
+            "选中账号开会话（priority={}）", account.schedule.priority
+        );
+        // 会话跑在独立 task：引擎才能在 stop 信号到达时注入关停并等它优雅收尾
+        // （内联 await 会死锁：引擎阻塞期间无人向活跃会话发停止信号）
+        let mut session_task = {
+            let wd = deps.wd.clone();
+            let cfg = deps.cfg.clone();
+            let store = deps.store.clone();
+            let device = deps.device.clone();
+            let factory = deps.factory.clone();
+            let active = handle.active.clone();
+            let account = account.clone();
+            let maa_bin = deps.maa_bin.clone();
+            let switch_timeout = deps.switch_timeout;
+            tokio::spawn(async move {
+                session::run_session_flow(
+                    &wd,
+                    &cfg,
+                    &store,
+                    &device,
+                    &account,
+                    executor_kind,
+                    task,
+                    slice,
+                    &factory,
+                    &active,
+                    switch_timeout,
+                    &maa_bin,
+                )
+                .await
+            })
+        };
+        let result = tokio::select! {
+            r = &mut session_task => r.unwrap_or_else(|e| session::SessionRunResult {
+                session_id: 0,
+                ok: false,
+                outcome: crate::model::SessionOutcome::ExecutorCrash,
+                error: Some(format!("会话 task panic：{e}")),
+            }),
+            res = stop_rx.changed() => {
+                if res.is_err() || *stop_rx.borrow() {
+                    handle.active.request_stop_any(StopReason::Shutdown);
+                }
+                let grace = Duration::from_millis(
+                    deps.cfg.scheduler.drain_grace.0.as_millis() as u64,
+                ) + Duration::from_secs(10);
+                match tokio::time::timeout(grace, &mut session_task).await {
+                    Ok(Ok(r)) => r,
+                    _ => session::SessionRunResult {
+                        session_id: 0,
+                        ok: false,
+                        outcome: crate::model::SessionOutcome::ExecutorCrash,
+                        error: Some("关停等待会话收尾超时".into()),
+                    },
+                }
+            }
+        };
+
+        // 退避记账（§10.2）：失败指数退避；成功清零
+        let b = &deps.cfg.scheduler.backoff;
+        if result.ok && matches!(result.outcome, crate::model::SessionOutcome::Completed) {
+            state.backoff.remove(&account.id);
+        }
+        let is_failure = !result.ok
+            || matches!(
+                result.outcome,
+                crate::model::SessionOutcome::Watchdog
+                    | crate::model::SessionOutcome::ExecutorCrash
+                    | crate::model::SessionOutcome::SwitchFailure
+            );
+        if is_failure {
+            let entry = state
+                .backoff
+                .entry(account.id.clone())
+                .or_insert(BackoffState {
+                    consecutive_failures: 0,
+                    until: tokio::time::Instant::now(),
+                });
+            entry.consecutive_failures += 1;
+            let delay =
+                crate::switch::backoff_delay(b, deps.backoff_override, entry.consecutive_failures);
+            entry.until = tokio::time::Instant::now() + delay;
+            tracing::warn!(
+                account = %account.id,
+                failures = entry.consecutive_failures,
+                ?delay,
+                outcome = result.outcome.name(),
+                "账号进入退避"
+            );
+        } else if result.ok {
+            state.backoff.remove(&account.id);
+        }
+
+        // 会话后的空调节流（保持停止响应性）
+        tokio::select! {
+            res = stop_rx.changed() => {
+                if res.is_err() || *stop_rx.borrow() { break; }
+            }
+            _ = tokio::time::sleep(deps.tick) => {}
+        }
+    }
+
+    // 关停：对活跃会话注入 Shutdown（runner 优雅 drain 后退出）
+    handle.active.request_stop_any(StopReason::Shutdown);
+    // 给 runner 一点收尾时间
+    for _ in 0..50 {
+        if handle
+            .active
+            .0
+            .lock()
+            .expect("active 锁 poisoned")
+            .is_none()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tracing::info!("调度引擎已停止");
+}
+
+/// 就绪判定 + 队列选择（§10.3）：`(priority desc, 就绪等待时长 desc)`。
+fn pick_next(
+    deps: &EngineDeps,
+    state: &mut EngineState,
+    accounts: &[Account],
+    now: chrono::DateTime<chrono::Local>,
+) -> Option<(Account, ExecutorKind, Option<String>, Duration)> {
+    struct Candidate {
+        account: Account,
+        executor_kind: ExecutorKind,
+        task: Option<String>,
+        slice: Duration,
+        ready_since: tokio::time::Instant,
+    }
+    let mut best: Option<Candidate> = None;
+    for account in accounts {
+        if !account.enabled {
+            continue;
+        }
+        if state
+            .backoff
+            .get(&account.id)
+            .map(|b| b.until > tokio::time::Instant::now())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if deps
+            .store
+            .active_session_by_account(&account.id)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            continue;
+        }
+        let Some((_w, scheduled_executor, task)) =
+            window::active_window(now, &account.schedule.windows)
+        else {
+            continue;
+        };
+        let executor_kind = match scheduled_executor {
+            ScheduledExecutor::Mower => ExecutorKind::Mower,
+            ScheduledExecutor::Maa => ExecutorKind::Maa,
+        };
+        // maa 窗口必须有任务名（模型校验兜底；手改文件绕过校验时跳过）
+        if executor_kind == ExecutorKind::Maa && task.unwrap_or("").is_empty() {
+            tracing::warn!(account = %account.id, "maa 窗口缺 task，跳过");
+            continue;
+        }
+        let ready_since = *state
+            .ready_since
+            .entry(account.id.clone())
+            .or_insert(tokio::time::Instant::now());
+        let slice = account
+            .schedule
+            .slice
+            .map(|d| Duration::from_millis(d.0.as_millis() as u64))
+            .unwrap_or(Duration::from_millis(
+                deps.cfg.scheduler.default_slice.0.as_millis() as u64,
+            ));
+        let cand = Candidate {
+            account: account.clone(),
+            executor_kind,
+            task: task.map(String::from),
+            slice,
+            ready_since,
+        };
+        best = Some(match best {
+            None => cand,
+            Some(b) => {
+                // priority desc；同优先级：就绪更早（等待更久）优先
+                if cand.account.schedule.priority > b.account.schedule.priority
+                    || (cand.account.schedule.priority == b.account.schedule.priority
+                        && cand.ready_since < b.ready_since)
+                {
+                    cand
+                } else {
+                    b
+                }
+            }
+        });
+    }
+    best.map(|c| (c.account, c.executor_kind, c.task, c.slice))
+}
+
+/// daily_guarantee（M1 告警级）：游戏日内有窗口但零会话 → 记日志（每组合一次）。
+fn check_daily_guarantee(
+    deps: &EngineDeps,
+    state: &mut EngineState,
+    accounts: &[Account],
+    now: chrono::DateTime<chrono::Local>,
+) {
+    if !deps.cfg.scheduler.daily_guarantee {
+        return;
+    }
+    let Some(day_key) = window::game_day_key(now, &deps.cfg.scheduler.game_day_boundary) else {
+        return;
+    };
+    let day_start = match window::game_day_start(now, &deps.cfg.scheduler.game_day_boundary) {
+        Some(s) => s.timestamp_millis(),
+        None => return,
+    };
+    for account in accounts {
+        if !account.enabled || account.schedule.windows.is_empty() {
+            continue;
+        }
+        // 仅当日界之后的所有窗口都已结束（今天不再会开会话）时判定
+        let all_ended = account
+            .schedule
+            .windows
+            .iter()
+            .all(|w| window::active_window(now, std::slice::from_ref(w)).is_none());
+        if !all_ended {
+            continue;
+        }
+        let key = (day_key.clone(), account.id.clone());
+        if state.guarantee_warned.contains(&key) {
+            continue;
+        }
+        let cnt = deps
+            .store
+            .sessions_cnt_since(&account.id, day_start)
+            .unwrap_or(0);
+        if cnt == 0 {
+            state.guarantee_warned.insert(key);
+            tracing::warn!(
+                account = %account.id,
+                game_day = %day_key,
+                "daily_guarantee：本游戏日有窗口但未运行任何会话（M1 仅告警，不补跑）"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::model::SessionState;
 
     #[test]
     fn session_state_lifecycle_table() {
-        // 状态机迁移表驱动测试的占位锚点（M1 任务 7 扩充为完整迁移表）
+        // 状态机迁移表驱动测试（§10.2 完整迁移表随 M2 多设备扩展）
         let cases: &[(SessionState, bool, bool)] = &[
             (SessionState::Created, false, true),
             (SessionState::Queued, false, true),

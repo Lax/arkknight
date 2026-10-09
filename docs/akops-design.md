@@ -220,7 +220,7 @@ akops/
 | `server` | `official \| bilibili` | 服务器类型（影响 client_type/包名/资源） |
 | `account_name` | string | **MAA 切号匹配串**（官服=打码手机号片段，B服=昵称；须全局唯一，`doctor` 校验） |
 | `enabled` | bool | 禁用后不参与调度 |
-| `schedule.windows` | `[{start,end,executor}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa` |
+| `schedule.windows` | `[{start,end,executor,task?}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa`；maa 窗口可指定 `task`（accounts/<id>/maa/tasks/ 下的任务名，缺省拒绝调度 maa 窗口）；窗口须 start<end（不跨午夜，校验拒绝） |
 | `schedule.priority` | int 0-100 | 队列优先级，默认 50 |
 | `schedule.slice` | duration | 时间片长度，覆盖全局默认（默认 2h） |
 | `provisioned_on` | `[device]` | 已人工登录过的设备（亲和的种子数据，正式记录在 SQLite） |
@@ -396,11 +396,15 @@ Created → Queued ─(获得设备租约)→ Switching → Running ─┬─(sl
 任何状态 → Cancelled（手动）
 ```
 
-- **设备租约（lease）**：SQLite 事务获取 `device_leases(device_name, session_id, acquired_at)`；daemon 崩溃恢复时按心跳超时回收孤儿租约
+- **设备租约（lease）**：SQLite 事务获取 `device_leases(device_name, holder, acquired_at, heartbeat_at)`；daemon 启动时按单写者语义**全清现存租约**（持锁启动 ⇒ 现存租约必属死进程），CLI 场景按心跳超时保守回收
 - **双超时**：`slice_deadline`（正常轮转）与 `max_runtime_deadline`（硬上限，默认 6h）独立计时
 - **看门狗**：执行器 health 探测（mower=WS 日志心跳 + `/device/status`；MAA=子进程存活）连续 N 次失败 → Draining → 按退避重排
 - **退避**：连续失败按 `{initial:5m, factor:2, max:60m}` 指数退避该账号的下次调度，避免「空扫死锁」类问题（吸取 mower issue 草稿教训：失败任务必须退避，不得 5 分钟空转重试）
 - **签到保护窗**（M1 简化实现）：每账号时间片内，mower 自身负责森空岛签到等；akops 保证每账号每日至少一个完整时间片（`daily_guarantee = true` 默认开）
+- **M1 实现备注**（实现与设计的差异备案）：退避状态为 daemon 内存态（重启清零，事件留痕于
+  `session_events`）；时间窗不跨午夜（start<end，配置校验拒绝）；`daily_guarantee` 仅告警
+  （游戏日内有窗口但零会话时记录事件，不主动补跑，避免与窗口语义冲突）；时间窗可带 `task`
+  字段指定 maa 任务（§6.1）
 
 ### 10.3 排队与优先级（M1 算法）
 
@@ -463,6 +467,9 @@ default_slice       = "2h"
 max_session_runtime = "6h"
 max_switch_retries  = 2
 daily_guarantee     = true
+drain_grace         = "2m"                  # 会话优雅停止等待（超时强杀）
+watchdog_interval   = "30s"                 # 执行器健康探测间隔
+watchdog_threshold  = 3                     # 连续失败次数 → Draining
 backoff             = { initial = "5m", max = "60m", factor = 2.0 }
 cross_account       = false                 # M3 开关
 

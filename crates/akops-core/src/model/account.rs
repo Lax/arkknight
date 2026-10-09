@@ -62,7 +62,7 @@ pub enum ScheduledExecutor {
     Maa,
 }
 
-/// 每日时间窗（游戏日界内，`HH:MM` 24 小时制）。
+/// 每日时间窗（游戏日界内，`HH:MM` 24 小时制；不跨午夜）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeWindow {
     /// 开始时刻 `HH:MM`（本地时区，游戏日为 04:00 起）
@@ -71,6 +71,31 @@ pub struct TimeWindow {
     pub end: String,
     /// 该窗口运行的执行器
     pub executor: ScheduledExecutor,
+    /// maa 窗口的任务名（accounts/<id>/maa/tasks/ 下；mower 窗口忽略）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+}
+
+impl TimeWindow {
+    /// 校验窗口语义：start < end（不跨午夜，设计文档 §10 M1 实现备注）。
+    pub fn validate(&self) -> Result<()> {
+        crate::model::account::validate_hhmm(&self.start, "时间窗 start")?;
+        crate::model::account::validate_hhmm(&self.end, "时间窗 end")?;
+        if self.start >= self.end {
+            return Err(CoreError::Config(format!(
+                "时间窗 {}-{} 不合法：须 start < end（M1 不支持跨午夜窗口）",
+                self.start, self.end
+            )));
+        }
+        if self.executor == ScheduledExecutor::Maa && self.task.as_deref().unwrap_or("").is_empty()
+        {
+            return Err(CoreError::Config(format!(
+                "maa 时间窗 {}-{} 缺少 task 字段（accounts/<id>/maa/tasks/ 下的任务名）",
+                self.start, self.end
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// 账号调度策略。
@@ -127,8 +152,7 @@ impl Account {
     pub fn validate(&self) -> Result<()> {
         validate_slug(&self.id, "账号 id")?;
         for w in &self.schedule.windows {
-            validate_hhmm(&w.start, "时间窗 start")?;
-            validate_hhmm(&w.end, "时间窗 end")?;
+            w.validate()?;
         }
         if self.schedule.priority > 100 {
             return Err(CoreError::Config(format!(
@@ -202,6 +226,7 @@ executor = "mower"
 start = "20:00"
 end = "22:00"
 executor = "maa"
+task = "roguelike"
 "#;
         let acc: Account = toml::from_str(toml_src).unwrap();
         assert_eq!(acc.server, Server::Official);
@@ -209,6 +234,7 @@ executor = "maa"
         assert_eq!(acc.schedule.windows.len(), 2);
         assert_eq!(acc.schedule.windows[0].executor, ScheduledExecutor::Mower);
         assert_eq!(acc.schedule.windows[1].executor, ScheduledExecutor::Maa);
+        assert_eq!(acc.schedule.windows[1].task.as_deref(), Some("roguelike"));
         assert_eq!(acc.provisioned_on, vec!["redroid-main"]);
         acc.validate().unwrap();
 

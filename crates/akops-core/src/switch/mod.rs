@@ -70,9 +70,96 @@ impl SwitchCtx {
     }
 }
 
+/// 切号机械计划（无 store/会话/租约参与；CLI [`run_switch`] 与调度器共用）。
+pub struct SwitchPlan<'a> {
+    pub wd: &'a Workdir,
+    pub cfg: &'a AkopsConfig,
+    pub account: &'a crate::model::Account,
+    pub device: &'a Device,
+    pub maa_bin: &'a Path,
+    pub adb_bin: &'a Path,
+    /// 单次尝试超时
+    pub timeout: Duration,
+    /// 覆盖退避初始间隔（测试用；None 用配置值）
+    pub backoff_initial_override: Option<Duration>,
+}
+
+/// 执行切号机械步骤：force-stop → 物化 MAA 配置 → `maa run startup` 重试环。
+/// 纯 mechanics——不触碰会话行/租约/switch_log，由调用方负责（§9.1）。
+pub async fn execute_switch(plan: &SwitchPlan<'_>) -> SwitchOutcome {
+    let started = std::time::Instant::now();
+    let account = plan.account;
+    let device = plan.device;
+
+    // force-stop 游戏（按 server 选包名；游戏未运行时也返回成功）
+    let package = account.server.game_package();
+    let _ = adb_shell(
+        plan.adb_bin,
+        &device.connection.host_adb,
+        &["am", "force-stop", package],
+    )
+    .await;
+
+    // 物化 MAA 配置（切号从宿主发起 → Process 视角地址，§9.1）
+    let maa_dir = plan.wd.account_dir(&account.id).join("maa");
+    let endpoints = crate::device::DeviceEndpoints {
+        host_adb: device.connection.host_adb.clone(),
+        docker_adb: device.connection.docker_adb.clone(),
+        docker_network: device.connection.docker_network.clone(),
+    };
+    if let Err(e) = materialize_maa(&maa_dir, account, &endpoints) {
+        return SwitchOutcome {
+            ok: false,
+            duration_ms: started.elapsed().as_millis() as i64,
+            attempts: 0,
+            error: Some(e.to_string()),
+            maa_log_excerpt: None,
+        };
+    }
+
+    // 重试环（≤ max_switch_retries + 1 次，指数退避）
+    let retries_max = plan.cfg.scheduler.max_switch_retries;
+    let mut attempts: u32 = 0;
+    let mut last_error: Option<String> = None;
+    let mut excerpt: Option<String> = None;
+    let mut ok = false;
+    while attempts <= retries_max {
+        attempts += 1;
+        tracing::info!(attempt = attempts, "maa run startup 第 {attempts} 次尝试");
+        match run_maa_startup(plan.maa_bin, plan.timeout, &maa_dir).await {
+            Ok(out) => {
+                ok = true;
+                excerpt = Some(out);
+                last_error = None;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(attempt = attempts, "切号尝试失败：{e}");
+                last_error = Some(e);
+                if attempts <= retries_max {
+                    let backoff = backoff_delay(
+                        &plan.cfg.scheduler.backoff,
+                        plan.backoff_initial_override,
+                        attempts,
+                    );
+                    tracing::info!(?backoff, "按指数退避等待后重试");
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        }
+    }
+
+    SwitchOutcome {
+        ok,
+        duration_ms: started.elapsed().as_millis() as i64,
+        attempts,
+        error: last_error,
+        maa_log_excerpt: excerpt,
+    }
+}
+
 /// 执行切号（§9.1 标准流程；INV-1 唯一入口）。
 pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
-    let started = std::time::Instant::now();
     let account = &ctx.account;
     let device = &ctx.device;
     let holder = format!("switch:{}", account.id);
@@ -136,60 +223,22 @@ pub async fn run_switch(ctx: &SwitchCtx) -> Result<SwitchOutcome> {
         .map_err(|e| CoreError::Other(e.to_string()))?;
     tracing::info!(account = %account.id, device = %device.name, session = session_id, "开始切号（INV-1: maa run startup）");
 
-    // force-stop 游戏（按 server 选包名；游戏未运行时也返回成功）
-    let package = account.server.game_package();
-    let _ = adb_shell(
-        &ctx.adb_bin,
-        &device.connection.host_adb,
-        &["am", "force-stop", package],
-    )
+    let outcome = execute_switch(&SwitchPlan {
+        wd: &ctx.wd,
+        cfg: &ctx.cfg,
+        account,
+        device,
+        maa_bin: &ctx.maa_bin,
+        adb_bin: &ctx.adb_bin,
+        timeout: ctx.timeout,
+        backoff_initial_override: ctx.backoff_initial_override,
+    })
     .await;
-
-    // 物化 MAA 配置（切号从宿主发起 → Process 视角地址，§9.1）
-    let maa_dir = ctx.wd.account_dir(&account.id).join("maa");
-    let endpoints = crate::device::DeviceEndpoints {
-        host_adb: device.connection.host_adb.clone(),
-        docker_adb: device.connection.docker_adb.clone(),
-        docker_network: device.connection.docker_network.clone(),
-    };
-    materialize_maa(&maa_dir, account, &endpoints)?;
-
-    // 重试环（≤ max_switch_retries + 1 次，指数退避）
-    let retries_max = ctx.cfg.scheduler.max_switch_retries;
-    let mut attempts: u32 = 0;
-    let mut last_error: Option<String> = None;
-    let mut excerpt: Option<String> = None;
-    let mut ok = false;
-    while attempts <= retries_max {
-        attempts += 1;
-        tracing::info!(attempt = attempts, "maa run startup 第 {attempts} 次尝试");
-        match run_maa_startup(ctx, &maa_dir).await {
-            Ok(out) => {
-                ok = true;
-                excerpt = Some(out);
-                last_error = None;
-                break;
-            }
-            Err(e) => {
-                tracing::warn!(attempt = attempts, "切号尝试失败：{e}");
-                last_error = Some(e);
-                if attempts <= retries_max {
-                    let backoff = backoff_delay(ctx, attempts);
-                    tracing::info!(?backoff, "按指数退避等待后重试");
-                    tokio::time::sleep(backoff).await;
-                }
-            }
-        }
-    }
-
-    let duration_ms = started.elapsed().as_millis() as i64;
-    let outcome = SwitchOutcome {
-        ok,
-        duration_ms,
-        attempts,
-        error: last_error.clone(),
-        maa_log_excerpt: excerpt.clone(),
-    };
+    let duration_ms = outcome.duration_ms;
+    let ok = outcome.ok;
+    let attempts = outcome.attempts;
+    let last_error = outcome.error.clone();
+    let excerpt = outcome.maa_log_excerpt.clone();
 
     // 记 switch_log + 会话终态
     let _ = ctx.store.insert_switch_log(&SwitchLogEntry {
@@ -242,19 +291,27 @@ impl Drop for LeaseRelease<'_> {
 }
 
 /// 退避延迟：initial × factor^(attempt-1)，封顶 max（§10.2）。
-fn backoff_delay(ctx: &SwitchCtx, attempt: u32) -> Duration {
-    if let Some(d) = ctx.backoff_initial_override {
+pub fn backoff_delay(
+    backoff: &crate::config::BackoffConfig,
+    override_initial: Option<Duration>,
+    attempt: u32,
+) -> Duration {
+    if let Some(d) = override_initial {
         return d;
     }
-    let b = &ctx.cfg.scheduler.backoff;
-    let initial = b.initial.0.as_millis() as f64;
-    let capped = (initial * b.factor.powi(attempt as i32 - 1)).min(b.max.0.as_millis() as f64);
+    let initial = backoff.initial.0.as_millis() as f64;
+    let capped =
+        (initial * backoff.factor.powi(attempt as i32 - 1)).min(backoff.max.0.as_millis() as f64);
     Duration::from_millis(capped as u64)
 }
 
 /// 运行 `maa run startup -p default --batch`（INV-1）；成功返回输出摘录。
-async fn run_maa_startup(ctx: &SwitchCtx, maa_dir: &Path) -> std::result::Result<String, String> {
-    let mut cmd = tokio::process::Command::new(&ctx.maa_bin);
+async fn run_maa_startup(
+    maa_bin: &Path,
+    timeout: Duration,
+    maa_dir: &Path,
+) -> std::result::Result<String, String> {
+    let mut cmd = tokio::process::Command::new(maa_bin);
     cmd.args(["run", "startup", "-p", "default", "--batch"])
         .env("MAA_CONFIG_DIR", maa_dir)
         .stdin(std::process::Stdio::null())
@@ -264,11 +321,11 @@ async fn run_maa_startup(ctx: &SwitchCtx, maa_dir: &Path) -> std::result::Result
 
     let child = cmd
         .spawn()
-        .map_err(|e| format!("spawn {} 失败：{e}", ctx.maa_bin.display()))?;
-    let output = match tokio::time::timeout(ctx.timeout, child.wait_with_output()).await {
+        .map_err(|e| format!("spawn {} 失败：{e}", maa_bin.display()))?;
+    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(out)) => out,
         Ok(Err(e)) => return Err(format!("等待 maa 退出失败：{e}")),
-        Err(_) => return Err(format!("切号超时（>{:?}）：MAA 任务被终止", ctx.timeout)),
+        Err(_) => return Err(format!("切号超时（>{timeout:?}）：MAA 任务被终止")),
     };
     let combined = format!(
         "{}\n{}",
@@ -472,10 +529,11 @@ mod tests {
         let store = std::sync::Arc::new(Store::open_in_memory().unwrap());
         let acc = account("a", "x");
         let ctx = SwitchCtx::new(&wd, &cfg, store, acc, device());
-        assert_eq!(backoff_delay(&ctx, 1), Duration::from_secs(300));
-        assert_eq!(backoff_delay(&ctx, 2), Duration::from_secs(600));
+        let b = &ctx.cfg.scheduler.backoff;
+        assert_eq!(backoff_delay(b, None, 1), Duration::from_secs(300));
+        assert_eq!(backoff_delay(b, None, 2), Duration::from_secs(600));
         assert_eq!(
-            backoff_delay(&ctx, 9),
+            backoff_delay(b, None, 9),
             Duration::from_secs(3600),
             "封顶 max"
         );

@@ -18,9 +18,11 @@ tracing.workspace = true
 dirs.workspace = true
 rusqlite.workspace = true
 fslock.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+async-trait.workspace = true
 
 [lints]
 workspace = true

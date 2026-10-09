@@ -382,6 +382,16 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// 账号自 `since_ms` 以来的会话数（daily_guarantee 告警用）。
+    pub fn sessions_cnt_since(&self, account_id: &str, since_ms: i64) -> Result<u32> {
+        let conn = self.conn();
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE account_id = ?1 AND started_at_ms >= ?2",
+            params![account_id, since_ms],
+            |r| r.get::<_, i64>(0).map(|v| v as u32),
+        )?)
+    }
+
     pub fn session_events(&self, session_id: u64) -> Result<Vec<SessionEvent>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
@@ -442,6 +452,21 @@ impl Store {
             params![device_name, holder, now_ms()],
         )?;
         Ok(())
+    }
+
+    /// 清空全部租约并返回被清的设备名（仅限 daemon 启动时的单写者语义，
+    /// 见 `scheduler::recover_on_start`；CLI 场景请用心跳超时的
+    /// [`Self::recover_orphan_leases`]）。
+    pub fn recover_all_leases(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT device_name FROM device_leases")?;
+        let all: Vec<String> = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        if !all.is_empty() {
+            conn.execute("DELETE FROM device_leases", [])?;
+        }
+        Ok(all)
     }
 
     pub fn lease_holder(&self, device_name: &str) -> Result<Option<String>> {

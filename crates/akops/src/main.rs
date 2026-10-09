@@ -107,7 +107,7 @@ enum Cmd {
     /// 调度器开关【M1 任务 7】
     Schedule {
         #[command(subcommand)]
-        cmd: commands::todo_placeholder::ScheduleCmd,
+        cmd: commands::schedule::ScheduleCmd,
     },
     /// maa-cli 包装：install/update/version【M1 任务 4】
     Maa {
@@ -187,7 +187,11 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
             generate(shell, &mut Cli::command(), "akops", &mut std::io::stdout());
             Ok(())
         }
-        Server { .. } => todo::server(),
+        Server { port, bind, open } => {
+            let wd = wd()?;
+            let guard = commands::write_lock(&wd)?;
+            commands::server::run(wd, guard, port, bind, open).await
+        }
         Provision { account, device } => {
             let wd = wd()?;
             let guard = commands::write_lock(&wd)?;
@@ -204,7 +208,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
             commands::switch_::run(wd, guard, account, device, timeout).await
         }
         Session { cmd } => commands::session::run(wd()?, cmd).await,
-        Schedule { cmd } => todo::schedule(cmd),
+        Schedule { cmd } => commands::schedule::run(wd()?, cmd).await,
         Maa { cmd } => commands::maa::run(wd()?, cmd).await,
         Mower { cmd } => todo::mower(cmd),
         Export { .. } => todo::export(),

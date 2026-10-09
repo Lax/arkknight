@@ -89,6 +89,21 @@ pub enum SessionOutcome {
     Cancelled,
 }
 
+impl SessionOutcome {
+    /// serde/存储名（snake_case，与 `#[serde(rename_all)]` 一致）。
+    pub fn name(self) -> &'static str {
+        match self {
+            SessionOutcome::Completed => "completed",
+            SessionOutcome::SliceExpired => "slice_expired",
+            SessionOutcome::MaxRuntime => "max_runtime",
+            SessionOutcome::Watchdog => "watchdog",
+            SessionOutcome::SwitchFailure => "switch_failure",
+            SessionOutcome::ExecutorCrash => "executor_crash",
+            SessionOutcome::Cancelled => "cancelled",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

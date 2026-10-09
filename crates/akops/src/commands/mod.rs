@@ -6,6 +6,8 @@ pub mod doctor;
 pub mod init;
 pub mod maa;
 pub mod provision;
+pub mod schedule;
+pub mod server;
 pub mod session;
 pub mod status;
 pub mod switch_;

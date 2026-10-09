@@ -152,21 +152,26 @@ fn toggle(wd: &Workdir, id: &str, enabled: bool) -> Result<()> {
     Ok(())
 }
 
-/// 解析 `HH:MM-HH:MM:mower|maa`。
+/// 解析 `HH:MM-HH:MM:mower|maa[:task]`（task 仅 maa 窗口需要）。
 fn parse_window(s: &str) -> Result<TimeWindow> {
     let toks: Vec<&str> = s.split(['-', ':']).collect();
-    if toks.len() != 5 {
-        bail!("时间窗 {s:?} 不合法：应为 HH:MM-HH:MM:mower|maa");
+    if toks.len() != 5 && toks.len() != 6 {
+        bail!("时间窗 {s:?} 不合法：应为 HH:MM-HH:MM:mower|maa[:task]");
     }
     let executor = match toks[4] {
         "mower" => ScheduledExecutor::Mower,
         "maa" => ScheduledExecutor::Maa,
         other => bail!("时间窗执行器 {other:?} 不合法：mower|maa"),
     };
+    let task = toks.get(5).map(|t| t.to_string());
+    if executor == ScheduledExecutor::Mower && task.is_some() {
+        bail!("task 仅对 maa 窗口有效");
+    }
     Ok(TimeWindow {
         start: format!("{}:{}", toks[0], toks[1]),
         end: format!("{}:{}", toks[2], toks[3]),
         executor,
+        task,
     })
 }
 
@@ -180,9 +185,12 @@ mod tests {
         assert_eq!(w.start, "08:00");
         assert_eq!(w.end, "12:00");
         assert_eq!(w.executor, ScheduledExecutor::Mower);
-        let w = parse_window("20:30-22:00:maa").unwrap();
+        assert_eq!(w.task, None);
+        let w = parse_window("20:30-22:00:maa:roguelike").unwrap();
         assert_eq!(w.executor, ScheduledExecutor::Maa);
+        assert_eq!(w.task.as_deref(), Some("roguelike"));
         assert!(parse_window("8:00-12:00").is_err());
         assert!(parse_window("08:00-12:00:xyz").is_err());
+        assert!(parse_window("08:00-12:00:mower:sometask").is_err());
     }
 }
