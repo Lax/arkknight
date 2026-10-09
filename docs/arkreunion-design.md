@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **版本** | 1.0（设计定稿，指导 M1 开发） |
-| **日期** | 2026-10-08 |
-| **状态** | 已评审通过（决策记录见 `ai/adr/0001`） |
+| **版本** | 1.1（补充账号 key 命名与文档对照，见 ADR-0004/0005/0006） |
+| **日期** | 2026-10-09 |
+| **状态** | 已评审通过（决策记录见 `ai/adr/`，0001~0006） |
 | **读者** | 开发者（含 AI 协作者）、架构评审者 |
 | **配套文档** | `ai/AGENTS.md`（AI 协作规范）、`dev/`、`user/` |
 
@@ -78,6 +78,9 @@ arkreunion 是一个**独立开源项目**：一个跨平台（Linux / Windows /
 | **会话 (Session)** | 一次「设备租约 + 账号切换 + 执行器运行」的完整生命周期单元 |
 | **切号 (Switch)** | 通过 MAA「开始唤醒」任务完成的账号登出→选号→登入 |
 | **账号 bundle** | 一个账号的全部私有配置目录（MAA 配置 + mower 配置） |
+| **账号 key** | 账号的**本地定位键**（= 目录 `accounts/<key>/`）。本项目内部概念，**非游戏身份** —— 游戏身份是 `account_name`（切号匹配串）与 `uid` |
+| **切号匹配串** | `account_name`：MAA 在快速登录列表里的匹配依据（官服=打码手机号片段，B服=昵称） |
+| **游戏 UID** | `uid`：游戏内数字 ID，切号后经 MAA OCR 核验登录身份，防登错号串数据（§9.4） |
 | **物化 (Materialize)** | 从 arkreunion 统一配置生成执行器可直接消费的配置文件的过程 |
 | **时间片 (Slice)** | 时间片轮转模式下分配给某账号的一段独占设备时长 |
 | **游戏日界** | 官服每日 04:00（UTC-4）刷新；调度时间窗以此为日界 |
@@ -216,6 +219,7 @@ arkreunion/
 > **命名约定**：`Account` 的四个标识字段各司其职，勿混——
 > `key` 是**本地定位键**（本项目内部概念：目录名 + CLI 参数），
 > 而 `account_name` / `uid` 是**游戏侧标识**，`display_name` 仅供展示。
+> 命名决策与备选（`slot`/`profile`/`name` 为何不用）见 [ADR-0004](./ai/adr/0004-账号本地标识用key.md)。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -565,7 +569,9 @@ watermark    = { free_mem_gb = 14, cpu_idle_pct = 20 }   # 扩容准入水位
 | Svelte 5 / SolidJS | 运行时最轻、性能好 | 表格/图表/排程组件生态薄、中文资料少，维护押注个人 | 备选 |
 | React Native / Flutter | 手机原生体验最佳 | 无法嵌入二进制、发布链路重、需另维护 API 兼容层 | 仅作为未来「手机伴侣 App」候选（复用本 REST/WS API），不作主控制台 |
 
-一期页面清单：Dashboard（总览+队列）｜账号管理（含预置引导向导）｜设备管理（health/水位/测试）｜会话列表（实时状态+深链 mower UI）｜调度策略编辑｜维护中心（三类更新+doctor）｜统计（ECharts）｜日志查看器（WS 实时 tail）。
+一期页面清单：Dashboard（总览+队列）｜账号管理（含预置引导向导）｜设备管理（health/水位/测试/截图）｜会话列表（实时状态+深链 mower UI）｜调度策略编辑｜维护中心（三类更新+doctor）｜统计（ECharts）｜日志查看器（WS 实时 tail）。
+
+> **已实现对照**（2026-10-09）：七页已交付（总览/会话/日志实时/账号 CRUD/设备测试+截图/调度只读/维护 doctor）。**调度策略编辑、统计页、账号预置引导向导** 属尾批未做；「深链 mower UI」通过会话分配的 `mower_port` 实现。页面与 API 的实际清单见 [`dev/api.md`](./dev/api.md)。
 
 **配置界面策略（分阶段吸收）**：M1 只做 arkreunion 自有配置（账号/设备/策略）表单 + 深链 mower 自带 UI（会话运行期可用）+ MAA tasks 只读展示；M2 起把高频 mower 配置项吸收进统一界面并回写 bundle；plan.json 可视化编辑器（17 房间排班）远期评估，不自研轮子优先深链。
 
@@ -600,6 +606,10 @@ WS     /api/ws                           # 事件流：会话状态机迁移/切
 ```
 
 鉴权：`token` 非空时 Bearer 或 `?token=`（与 mower 兼容习惯）；默认 bind 127.0.0.1。
+
+> **本节是草案，含未实现项。** 实际已实现的路由见 [`dev/api.md`](./dev/api.md)（那里逐条标注了「未实现」）。
+> 关键差异：鉴权**只作用于 `/api/*`**，静态资源放行 —— 见 [ADR-0005](./ai/adr/0005-Web控制台鉴权只作用于API.md)。
+> 容器化部署时 `bind` 须设 `0.0.0.0`（容器内绑 loopback 收不到宿主端口转发），此时按 §17 强制配 token。
 
 ---
 
@@ -708,9 +718,12 @@ arkreunion server --open                        # 常驻调度 + 控制台
 | 单元 | 物化器 golden-file 测试（MAA TOML/mower conf patch 快照）；状态机迁移表驱动测试；退避/时间窗纯函数（mock 时钟 `tokio::time::pause`）；端口分配并发测试 |
 | 集成 | daemon/standalone 双模式互斥（文件锁）；API 契约测试（OpenAPI schema 校验）；export/import 往返（含 redacted、跨 schema_version 拒绝） |
 | 冒烟（对真实环境） | 现有部署（redroid-2771 + mower 检出）上跑 M1 验收脚本：2 账号预置→切号→时间片轮转→深链 UI 编辑持久化→导出导入 |
-| 执行器假件 | `FakeExecutor`/`FakeDeviceBackend`（trait 的红利）：调度器全场景可在 CI 无设备跑通 |
+| 执行器假件 | `FakeExecutor`（trait 的红利）：调度器全场景可在 CI 无设备跑通。设备层假件（`FakeDeviceBackend`）**尚未实现** —— 设备测试目前走 `ExternalBackend` + 不存在的端口断言失败 |
 
 CI（GitHub Actions）：fmt + clippy(deny warnings) + test（三平台矩阵）+ 前端 lint/build。
+
+> 操作手册（golden 快照更新、调度场景假件、避免 flaky 的具体做法）见
+> [`dev/testing.md`](./dev/testing.md)。
 
 ---
 

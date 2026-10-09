@@ -1,6 +1,6 @@
 //! MaaCliExecutor（§8.2）：MAA 任务会话 + 切号（switch 模块直接调 maa，不经此层）。
 //!
-//! 每账号独立 `MAA_CONFIG_DIR = <workdir>/accounts/<id>/maa/`（profiles + tasks），
+//! 每账号独立 `MAA_CONFIG_DIR = <workdir>/accounts/<key>/maa/`（profiles + tasks），
 //! 完全隔离；运行 = `maa run <task> -p default --batch` 子进程。
 
 use std::collections::HashMap;

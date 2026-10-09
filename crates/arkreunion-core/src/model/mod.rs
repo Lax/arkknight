@@ -1,7 +1,7 @@
 //! 域模型：Account / Device / Session / 调度词汇（设计文档 §6）。
 //!
 //! 这些类型同时是配置文件的 serde 形态（事实源，INV-4）：
-//! - `accounts/<id>/account.toml` → [`account::Account`]
+//! - `accounts/<key>/account.toml` → [`account::Account`]
 //! - `devices/<name>.toml` → [`device::Device`]
 //! - 会话运行态在 SQLite（[`crate::store`]），此处只定义领域词汇。
 

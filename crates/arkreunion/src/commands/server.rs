@@ -4,8 +4,8 @@
 //! 非空时 Bearer / `?token=`）：
 //! - 状态/调度：`GET /api/status`、`POST /api/schedule/pause|resume`
 //! - 会话：`GET|POST /api/sessions`、`POST /api/sessions/{id}/drain`、`GET /api/sessions/{id}/logs`
-//! - 账号：`GET|POST /api/accounts`、`PATCH|DELETE /api/accounts/{id}`
-//! - 设备：`GET /api/devices`、`POST /api/devices/{name}/test`
+//! - 账号：`GET|POST /api/accounts`、`PATCH|DELETE /api/accounts/{key}`
+//! - 设备：`GET /api/devices`、`POST /api/devices/{name}/test`、`GET /api/devices/{name}/screenshot`
 //! - 维护：`GET /api/doctor`
 //! - 实时：`WS /api/ws?logs=<id>`（日志 tail）、`WS /api/ws?events=1`（事件流）
 //!
@@ -194,7 +194,7 @@ fn router(state: AppState) -> Router {
             axum::routing::get(api_accounts).post(api_account_create),
         )
         .route(
-            "/api/accounts/{id}",
+            "/api/accounts/{key}",
             axum::routing::patch(api_account_patch).delete(api_account_delete),
         )
         .route("/api/devices", axum::routing::get(api_devices))
@@ -533,7 +533,7 @@ async fn api_account_create(
             } else if msg.contains("account_name") {
                 "切号匹配串须在该设备已登录账号中唯一：官服用打码手机号片段（如 123****8901），B服用昵称；最终以 MAA 运行结果为准".to_string()
             } else if msg.contains("id") {
-                "id 决定目录 accounts/<id>：须小写字母/数字开头，仅含小写字母、数字、-、_"
+                "id 决定目录 accounts/<key>：须小写字母/数字开头，仅含小写字母、数字、-、_"
                     .to_string()
             } else {
                 "检查账号配置字段；`arkreunion doctor` 可体检".to_string()
@@ -1255,7 +1255,7 @@ mod tests {
     #[tokio::test]
     async fn 不存在实体的报错列出已注册项() {
         let app = router(state_with_token(""));
-        // PATCH 而非 GET：GET /api/accounts/{id} 未定义，会落到 SPA 回退返回 405
+        // PATCH 而非 GET：GET /api/accounts/{key} 未定义，会落到 SPA 回退返回 405
         let res = app
             .oneshot(
                 HttpRequest::patch("/api/accounts/nope")

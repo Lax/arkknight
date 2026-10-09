@@ -30,7 +30,7 @@ pub enum SessionCmd {
         /// 时间片（如 90m；缺省用全局默认，到期由任务 7 调度器执行）
         #[arg(long)]
         slice: Option<String>,
-        /// MAA 任务名（仅 --executor maa；来自 accounts/<id>/maa/tasks/）
+        /// MAA 任务名（仅 --executor maa；来自 accounts/<key>/maa/tasks/）
         #[arg(long)]
         task: Option<String>,
     },

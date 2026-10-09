@@ -1,6 +1,6 @@
 //! 物化器（§11.3）：从统一配置生成执行器可直接消费的配置。
 //!
-//! - MAA：`accounts/<id>/maa/profiles/default.toml` + `tasks/startup.toml`
+//! - MAA：`accounts/<key>/maa/profiles/default.toml` + `tasks/startup.toml`
 //! - mower：会话启动瞬间对 `conf.yml` 的**白名单改写**（仅 `adb`、
 //!   `start_automatically`、`webview.port`、`webview.token` 四项，§11.4），
 //!   其余键（含用户通过 mower UI 的编辑）原样保留

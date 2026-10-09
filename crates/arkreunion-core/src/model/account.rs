@@ -71,7 +71,7 @@ pub struct TimeWindow {
     pub end: String,
     /// 该窗口运行的执行器
     pub executor: ScheduledExecutor,
-    /// maa 窗口的任务名（accounts/<id>/maa/tasks/ 下；mower 窗口忽略）
+    /// maa 窗口的任务名（accounts/<key>/maa/tasks/ 下；mower 窗口忽略）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
 }
@@ -90,7 +90,7 @@ impl TimeWindow {
         if self.executor == ScheduledExecutor::Maa && self.task.as_deref().unwrap_or("").is_empty()
         {
             return Err(CoreError::Config(format!(
-                "maa 时间窗 {}-{} 缺少 task 字段（accounts/<id>/maa/tasks/ 下的任务名）",
+                "maa 时间窗 {}-{} 缺少 task 字段（accounts/<key>/maa/tasks/ 下的任务名）",
                 self.start, self.end
             )));
         }

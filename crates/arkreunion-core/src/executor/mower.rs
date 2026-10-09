@@ -1,7 +1,7 @@
 //! MowerExecutor 的 ProcessRunner 形态（§8.3，ADR-0001 D5）。
 //!
 //! 本地 mower 检出 + Python 环境：spawn `<python> <data>/run_server.py`，
-//! `MOWER_DATA_DIR = accounts/<id>/mower-data`（config 符号链接直指 bundle，
+//! `MOWER_DATA_DIR = accounts/<key>/mower-data`（config 符号链接直指 bundle，
 //! 用户在 mower UI 的改动天然持久化，§11.4）。
 //! DockerRunner（bollard）形态属任务 6 后半交付。
 
