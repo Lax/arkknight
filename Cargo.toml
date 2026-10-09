@@ -28,7 +28,10 @@ tempfile = "3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 fslock = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws"] }
+rust-embed = "8"
+mime_guess = "2"
+futures-util = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

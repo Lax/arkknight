@@ -1,1 +1,1 @@
-{"root":["./src/main.ts","./src/router.ts","./src/App.vue","./src/views/DashboardView.vue"],"version":"5.9.3"}
+{"root":["./src/api.ts","./src/main.ts","./src/router.ts","./src/App.vue","./src/views/AccountsView.vue","./src/views/DashboardView.vue","./src/views/DevicesView.vue","./src/views/DoctorView.vue","./src/views/LogsView.vue","./src/views/ScheduleView.vue","./src/views/SessionsView.vue"],"version":"5.9.3"}

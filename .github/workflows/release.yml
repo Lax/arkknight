@@ -1,0 +1,288 @@
+# 自动发布流水线：tag 推送（v*）或手动触发
+# 产出（§16 三平台单二进制）：
+#   - akops-v{ver}-x86_64-unknown-linux-gnu.tar.gz（另出 .deb）
+#   - akops-v{ver}-aarch64-unknown-linux-gnu.tar.gz
+#   - akops-v{ver}-x86_64-pc-windows-msvc.zip
+#   - akops-v{ver}-aarch64-apple-darwin.tar.gz
+#   - SHA256SUMS
+# 二进制均含 rust-embed 嵌入的控制台（构建前先 npm build ui/dist）。
+# Linux aarch64 为交叉编译（rusqlite bundled 走 CC 交叉变量，已在 CI 验证）。
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: akops
+
+permissions:
+  contents: write
+
+jobs:
+  ui:
+    name: ui build（rust-embed 前置）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist/
+          retention-days: 1
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: ui
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+            cross: false
+          # Intel Mac：Apple 工具链原生支持交叉（rustup target 即可，无需额外依赖）
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+            cross: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.cross && matrix.target || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+
+      # Linux aarch64 交叉工具链（rusqlite bundled 的 C 交叉依赖 CC 变量）
+      - name: Install cross toolchain (linux-aarch64)
+        if: matrix.cross && runner.os == 'Linux' 
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
+          } >> "$GITHUB_ENV"
+
+      - name: Build (release)
+        run: cargo build --release --target ${{ matrix.target }} -p akops
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          PKG="akops-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}"
+          mkdir -p "dist/$PKG"
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/$PKG/"
+          cp README.md LICENSE "dist/$PKG/"
+          tar -czf "dist/$PKG.tar.gz" -C dist "$PKG"
+          echo "PACKAGE=dist/$PKG.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME } else { 'dev' }
+          $pkg = "akops-$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$pkg" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/$env:BIN_NAME.exe" "dist/$pkg/"
+          Copy-Item README.md, LICENSE "dist/$pkg/"
+          Compress-Archive -Path "dist/$pkg" -DestinationPath "dist/$pkg.zip"
+          "PACKAGE=dist/$pkg.zip" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      # Linux x86_64 追加 .deb 安装包（cargo-deb，见 crates/akops/Cargo.toml metadata）
+      - name: Package (.deb)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          # 构建步骤带 --target，二进制在 triple 目录；cargo-deb --no-build 按元数据找
+          # target/release/，此处补齐（硬拷贝，避免 cargo-deb 重新构建宿主目标）
+          mkdir -p target/release
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" target/release/
+          cargo install --locked cargo-deb
+          cargo deb -p akops --no-build --output dist/
+          for f in dist/*.deb; do echo "DEB=$f" >> "$GITHUB_ENV"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  arch-pkg:
+    name: Arch Linux 包（x86_64，重打包预编译二进制）
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: 准备构建用户（makepkg 拒绝 root）
+        run: |
+          pacman -Syu --noconfirm git
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pkg-x86_64-unknown-linux-gnu
+          path: dist
+      - name: 生成 PKGBUILD 并打包
+        run: |
+          PKGVER="${GITHUB_REF_NAME#v}"
+          PKGVER="${PKGVER:-0.0.0}"
+          mkdir -p pkgsrc
+          cat > pkgsrc/PKGBUILD <<EOF
+          pkgname=akops
+          pkgver=$PKGVER
+          pkgrel=1
+          pkgdesc='Arknights multi-account orchestrator (MAA + mower scheduling)'
+          arch=('x86_64')
+          url='https://github.com/${{ github.repository }}'
+          license=('MIT')
+          depends=('glibc')
+          options=('!strip' '!debug')
+          source=("akops-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu.tar.gz")
+          sha256sums=('SKIP')
+          package() {
+            install -Dm755 "\$srcdir/akops-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu/akops" \
+              "\$pkgdir/usr/bin/akops"
+          }
+          EOF
+          cp "dist/akops-${GITHUB_REF_NAME:-dev}-x86_64-unknown-linux-gnu.tar.gz" pkgsrc/
+          chown -R builder:builder pkgsrc dist
+      - name: makepkg
+        run: |
+          cd pkgsrc
+          sudo -u builder makepkg -f --noconfirm
+          mkdir -p ../dist
+          cp ./*.pkg.tar.zst ../dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-pkg
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  gentoo-ebuild:
+    name: Gentoo ebuild（外部 overlay 脚手架）
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 生成版本化 ebuild
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          PKGVER="${GITHUB_REF_NAME#v}"
+          PKGVER="${PKGVER:-0.0.0}"
+          mkdir -p "overlay/games-util/akops-bin" "overlay/metadata" "overlay/profiles"
+          echo akops > overlay/profiles/repo_name
+          cat > overlay/metadata/layout.conf <<EOF
+          masters = gentoo
+          thin-manifests = true
+          EOF
+          cat > "overlay/games-util/akops-bin/akops-bin-${PKGVER}.ebuild" <<EOF
+          # Copyright 2026 akops contributors
+          # Distributed under the terms of the GNU General Public License v2
+          # 由 akops release 流水线生成；整目录可作为独立 overlay 仓库使用（external project）
+
+          EAPI=8
+
+          DESCRIPTION="Arknights multi-account orchestrator (MAA + mower scheduling)"
+          HOMEPAGE="https://github.com/${REPO}"
+          SRC_URI="https://github.com/${REPO}/releases/download/v\${PV}/akops-v\${PV}-x86_64-unknown-linux-gnu.tar.gz -> akops-\${PV}-linux-x86_64.tar.gz"
+          S="\${WORKDIR}/akops-v\${PV}-x86_64-unknown-linux-gnu"
+
+          LICENSE="MIT"
+          SLOT="0"
+          KEYWORDS="~amd64"
+          RESTRICT="strip"
+          QA_PREBUILT="usr/bin/akops"
+
+          src_install() {
+            newbin akops akops
+            einstalldocs
+          }
+          EOF
+          # thin-manifests 模式无需 Manifest DIST 条目
+      - name: 打包 overlay（保持目录结构）
+        run: |
+          mkdir -p dist
+          tar -czf dist/akops-overlay.tar.gz -C overlay .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gentoo-ebuild
+          path: dist/akops-overlay.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub Release（校验和 + 发布）
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, arch-pkg, gentoo-ebuild]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-pkg
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: gentoo-ebuild
+          path: dist
+      - name: 生成 SHA256SUMS
+        run: |
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip ./*.deb ./*.pkg.tar.zst > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/*.pkg.tar.zst
+            dist/SHA256SUMS
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

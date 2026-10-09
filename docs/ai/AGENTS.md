@@ -40,14 +40,26 @@ docs/                   本文档树
   就绪判定/队列（priority desc + FIFO）、指数退避（内存态）、双超时+看门狗（MonitorParams select 环）、
   崩溃恢复（启动全清租约+标记中断会话）、会话独立 task + 引擎 stop 注入（防死锁）、
   `schedule pause/resume` 经 daemon API、SIGINT/SIGTERM 优雅关停；FakeExecutor 五场景测试
-- **server 骨架（任务 8 前半）**：`akops server`=持锁 daemon + daemon.json + 最小 API
-  （status/pause/resume/sessions/sessions/{id}/drain，token 鉴权 Bearer/?token=）+
-  schedule CLI 经 API 生效；控制台/OpenAPI/WS 仍属任务 8
+- **控制台 v1（任务 8 大半，2026-10-09）**：API 完整化（accounts CRUD/devices test/doctor/
+  session logs/手动会话 POST /api/sessions——活跃占用 409、暂停保护、结束还原）+
+  WS（`?logs=<id>` 日志 tail、`?events=1` 事件流 EventBus）+ rust-embed 嵌入 `ui/dist`
+  （debug 读盘、未构建回退指引页）+ 前端七页（总览/会话+日志/日志实时/账号 CRUD/
+  设备测试/调度只读/维护 doctor）；引擎重构出 EngineShared（server 与引擎共享依赖）
+- **UID 核验（§9.4，2026-10-09）**：切号成功后经 MAA 自定义 pipeline（--user-resource +
+  OCR 个人信息页期望 UID）核验登录身份，失败=SwitchFailed 防串数据；`Account.uid` 经
+  provision/add/PATCH 录入，doctor 对缺 uid 告警（MAA 切号静默失败系 issue #15309）
+- **发布自动化（2026-10-09）**：`.github/workflows/release.yml`——tag `v*` 自动构建
+  6 目标安装包（linux x86_64/aarch64 + windows x86_64 + macos aarch64/Intel；aarch64 交叉编译走
+  CC/LINKER 环境变量，rusqlite bundled C 一并交叉）+ deb + Arch Linux 包（容器内 makepkg 重打包）+ Gentoo -bin ebuild（外部 overlay 脚手架，
+  thin-manifests）+ SHA256SUMS + 自动 GitHub Release；
+  ui job 先行构建（rust-embed release 编译期嵌入，缺 dist 会编译失败属特性）；
+  cargo-deb 配置在 crates/akops/Cargo.toml；流程文档 docs/dev/release.md
 - 进行中/未做：任务 6 后半（**DockerRunner（bollard）** + mower update UpdatePlan）→
-  任务 8（控制台 v1 + WS + OpenAPI）→ 任务 9（导入导出）
+  任务 8 尾批（OpenAPI/utoipa、统计页 ECharts、调度策略表单编辑）→ 任务 9（导入导出）
+  → 72h 真机验收
 - 实现备注：真实环境切号验证依赖 provision 后的账号（需人工登录），当前以 fake maa/adb 冒烟 +
   真机 device test/doctor 覆盖；`maa run --dry-run` 可用于无设备校验物化配置
-- 测试：`cargo test`（59 单测 + 4 golden + 5 调度场景）；golden 更新：`AKOPS_UPDATE_GOLDEN=1 cargo test -p akops-core --test golden`
+- 测试：`cargo test`（59 单测 + 4 golden + 5 调度场景）；前端 `cd ui && npm run build`（含 vue-tsc）；golden 更新：`AKOPS_UPDATE_GOLDEN=1 cargo test -p akops-core --test golden`
 
 ## 硬性不变量（违反即拒改）
 
