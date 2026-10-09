@@ -46,6 +46,11 @@ pub enum DeviceCmd {
 }
 
 pub(crate) async fn run(wd: Workdir, cmd: DeviceCmd) -> Result<()> {
+    // 写类子命令须持有单写者锁（D7）；读类/探测类直接走
+    let _guard = match cmd {
+        DeviceCmd::List | DeviceCmd::Show { .. } | DeviceCmd::Test { .. } => None,
+        _ => Some(crate::commands::write_lock(&wd)?),
+    };
     match cmd {
         DeviceCmd::Add {
             name,

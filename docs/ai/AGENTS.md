@@ -27,15 +27,20 @@ ui/                     Vue3 + Vite + Naive UI 控制台源码
 docs/                   本文档树
 ```
 
-**当前状态**（2026-10-08，M1 任务 1/2 已落地）：
-- 已实现：workspace 骨架、域模型（Account/Device/Session 词汇）、akops.toml 配置层与工作目录布局、
-  环境探测、doctor（验收：能发现现有部署全部组件）、DeviceBackend trait + External 后端（health/游戏包检测）、
-  Executor trait、物化器（MAA profile/tasks + mower conf 白名单 patch，golden 测试）、
-  CLI：`init/doctor/status/account add|list|show|remove|enable|disable/device add|list|show|remove|test/completions`；
-  其余子命令为里程碑占位（报进度提示，不误导）
-- 进行中：M1 任务 3（SQLite 租约）→ 任务 4（MAA 切号）→ 任务 5（provision）→ 任务 6（mower 双 Runner）→
-  任务 7（调度器）→ 任务 8（server+控制台）→ 任务 9（导入导出）
-- 测试：`cargo test`（34 单测 + 4 golden）；golden 更新：`AKOPS_UPDATE_GOLDEN=1 cargo test -p akops-core --test golden`
+**当前状态**（2026-10-09，M1 任务 1-5 完成、任务 6 前半完成）：
+- 已实现：workspace 骨架、域模型与配置层、环境探测 + doctor、DeviceBackend/Executor trait + External 后端、
+  物化器（MAA/mower，golden 测试）、CLI init/doctor/status/account/device/completions（任务 1/2）；
+  **store 层**（rusqlite WAL + schema v1 迁移 + 租约/端口记账/logins + 单写者 flock，任务 3）；
+  **MaaCliExecutor + switch::run_switch**（INV-1 唯一路径：force-stop→物化→`maa run startup --batch`→
+  重试退避→switch_log；maa 路径可注入，fake 测试覆盖；`akops maa install|update|version`；任务 4）；
+  **provision**（投屏指引 + 回车确认 + logins 记录 + 租约互斥，任务 5）；
+  **MowerProcessExecutor + session start/stop/list/logs**（端口分配 + conf 白名单 patch + 深链 +
+  日志归档 logs/sessions/<id>.log + POST /stop 优雅停止→pid 兜底强杀；任务 6 前半）
+- 进行中/未做：任务 6 后半（**DockerRunner（bollard）** + mower update UpdatePlan）→ 任务 7（调度器）→
+  任务 8（server+控制台）→ 任务 9（导入导出）
+- 实现备注：真实环境切号验证依赖 provision 后的账号（需人工登录），当前以 fake maa/adb 冒烟 +
+  真机 device test/doctor 覆盖；`maa run --dry-run` 可用于无设备校验物化配置
+- 测试：`cargo test`（54 单测 + 4 golden）；golden 更新：`AKOPS_UPDATE_GOLDEN=1 cargo test -p akops-core --test golden`
 
 ## 硬性不变量（违反即拒改）
 

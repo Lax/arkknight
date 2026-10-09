@@ -16,6 +16,8 @@ async-trait.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 dirs.workspace = true
+rusqlite.workspace = true
+fslock.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

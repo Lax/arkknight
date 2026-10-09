@@ -576,19 +576,22 @@ WS     /api/ws                           # 事件流：会话状态机迁移/切
 
 ## 14. 持久化设计
 
-SQLite（rusqlite + WAL + bundled），`state/akops.db`，schema 版本化（`meta.schema_version`，内建迁移器，`akops migrate` 手动触发）。
+SQLite（rusqlite + WAL + bundled），`state/akops.db`，schema 版本化（`meta.schema_version` + `PRAGMA user_version`，内建迁移器，`akops migrate` 手动触发）。**时间戳列统一为 INTEGER（UTC epoch 毫秒）**；Store 为单连接 + Mutex（rusqlite Connection 仅 Send，包 Mutex 后 Store: Sync）。
 
 ```sql
--- 运行态（可重建部分不入库，INV-4）
+-- 运行态（可重建部分不入库，INV-4）；实现基线见 crates/akops-core/src/store/mod.rs SCHEMA_V1
 sessions(id PK, account_id, device_name, executor, runner, state,
-         mower_port, slice_deadline, max_runtime_deadline,
-         started_at, ended_at, outcome, error)
-session_events(id PK, session_id FK, ts, kind, detail_json)   -- 状态机迁移/看门狗/退避
-device_leases(device_name PK, session_id FK, acquired_at, heartbeat_at)
-port_allocations(port PK, session_id FK, kind)
-switch_log(id PK, ts, account_id, device_name, ok, duration_ms, retries, maa_log_excerpt)
-logins(account_id, device_name, status, first_at, last_verified_at, PRIMARY KEY(account_id, device_name))
-maintenance_log(id PK, ts, target, action, from_v, to_v, ok, detail)
+         mower_port, locator,                    -- locator=`pid=<n> port=<p>`，跨进程 stop 依赖
+         slice_deadline_ms, max_runtime_deadline_ms,
+         started_at_ms, ended_at_ms, outcome, error)
+session_events(id PK, session_id FK, ts_ms, kind, detail)      -- 状态机迁移/看门狗/退避（任何迁移必写）
+device_leases(device_name PK, holder, acquired_at_ms, heartbeat_at_ms)
+               -- holder ∈ 'session:<id>' | 'switch:<account>' | 'provision:<account>'：
+               -- 手动 switch/provision 同样短暂持有租约（§6.5），不伪造会话行
+port_allocations(port PK, holder, kind, allocated_at_ms)       -- 分配前绑定探测（R8）
+switch_log(id PK, ts_ms, account_id, device_name, ok, duration_ms, retries, maa_log_excerpt)
+logins(account_id, device_name, status, first_at_ms, last_verified_ms, PRIMARY KEY(account_id, device_name))
+maintenance_log(id PK, ts_ms, target, action, from_version, to_version, ok, detail)
 -- 统计
 stats_daily(day TEXT, account_id, minutes_run, sessions_cnt, switch_cnt, sanity_spent,
             PRIMARY KEY(day, account_id))   -- 分钟数来自 sessions；明细来自各 bundle report.csv 导入

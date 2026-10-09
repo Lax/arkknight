@@ -102,7 +102,7 @@ enum Cmd {
     /// 会话管理【M1 任务 6/7】
     Session {
         #[command(subcommand)]
-        cmd: commands::todo_placeholder::SessionCmd,
+        cmd: commands::session::SessionCmd,
     },
     /// 调度器开关【M1 任务 7】
     Schedule {
@@ -112,7 +112,7 @@ enum Cmd {
     /// maa-cli 包装：install/update/version【M1 任务 4】
     Maa {
         #[command(subcommand)]
-        cmd: commands::todo_placeholder::MaaCmd,
+        cmd: commands::maa::MaaCmd,
     },
     /// mower 更新（pin commit，含回滚）【M1 任务 6】
     Mower {
@@ -188,15 +188,24 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
         Server { .. } => todo::server(),
-        Provision { account, device } => todo::provision(&account, device.as_deref()),
+        Provision { account, device } => {
+            let wd = wd()?;
+            let guard = commands::write_lock(&wd)?;
+            let store = commands::open_store(&wd)?;
+            commands::provision::run(wd, guard, store, account, device).await
+        }
         Switch {
             account,
             device,
             timeout,
-        } => todo::switch(&account, device.as_deref(), timeout.as_deref()),
-        Session { cmd } => todo::session(cmd),
+        } => {
+            let wd = wd()?;
+            let guard = commands::write_lock(&wd)?;
+            commands::switch_::run(wd, guard, account, device, timeout).await
+        }
+        Session { cmd } => commands::session::run(wd()?, cmd).await,
         Schedule { cmd } => todo::schedule(cmd),
-        Maa { cmd } => todo::maa(cmd),
+        Maa { cmd } => commands::maa::run(wd()?, cmd).await,
         Mower { cmd } => todo::mower(cmd),
         Export { .. } => todo::export(),
         Import { .. } => todo::import(),

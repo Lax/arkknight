@@ -2,9 +2,12 @@
 //!
 //! INV-3：调度器只面向本 trait 编程，新增执行器不得修改调度器核心。
 //! 具体实现按里程碑交付：
-//! - [`maa`]（M1 任务 4）：切号（startup 任务）+ 用户自定义 MAA 任务会话
-//! - [`mower`](self)（M1 任务 6）：基建会话，Runner 子层 Docker|Process（ADR-0001 D5）
+//! - [`maa`]（M1 任务 4）：MAA 任务会话；切号走 [`crate::switch`]（INV-1 唯一入口）
+//! - mower（M1 任务 6）：基建会话，Runner 子层 Docker|Process（ADR-0001 D5）
 //! - 预留：ScriptExecutor 等第三方
+
+pub mod maa;
+pub mod mower;
 
 use std::time::Duration;
 
@@ -12,6 +15,9 @@ use serde::Serialize;
 
 use crate::device::DeviceEndpoints;
 use crate::model::{Account, ExecutorKind, RunnerKind};
+
+pub use maa::MaaCliExecutor;
+pub use mower::{MowerProcessExecutor, parse_locator, stop_via_http};
 
 /// 执行器错误。
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +47,20 @@ pub struct SessionCtx {
     pub mower_port: Option<u16>,
     /// 工作目录根（执行器在其下定位账号 bundle）
     pub workdir: std::path::PathBuf,
+    /// mower 检出根（ProcessRunner cwd 与启动器路径来源；来自 paths.mower_dir）
+    pub mower_checkout: std::path::PathBuf,
+    /// MAA 任务名（仅 MAA 会话；None 时 MaaCliExecutor 拒绝启动）
+    pub maa_task: Option<String>,
+}
+
+impl SessionCtx {
+    /// mower webview 会话 token（深链拼接用）。
+    ///
+    /// M1 采用可预测值（仅面向 localhost/内网）；server 暴露公网时由任务 8
+    /// 升级为随机 token 并经 /api 下发。
+    pub fn webview_token(&self) -> String {
+        format!("akops-s{}", self.session_id)
+    }
 }
 
 /// 执行器句柄：一次启动的唯一凭据（容器 id / 子进程 pid 等）。
@@ -131,6 +151,8 @@ mod tests {
             runner: RunnerKind::Process,
             mower_port: Some(58100),
             workdir: std::env::temp_dir(),
+            mower_checkout: std::env::temp_dir(),
+            maa_task: None,
         };
         let h = ex.start(&ctx).await.unwrap();
         assert_eq!(ex.health(&h).await, ExecutorHealth::Alive);

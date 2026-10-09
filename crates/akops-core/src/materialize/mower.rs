@@ -48,6 +48,64 @@ pub fn patch_conf(input: &str, patch: &MowerPatch) -> Result<String> {
         .map_err(|e| CoreError::Config(format!("序列化 conf.yml 失败：{e}")))
 }
 
+/// 确保 ProcessRunner 的数据目录（§8.3）：`mower-data/config -> ../mower` 符号链接 + `tmp/`。
+///
+/// 返回数据目录路径。Windows 无符号链接权限时给出明确错误（跨平台限制，§16）。
+pub fn ensure_process_data_dir(account_dir: &std::path::Path) -> Result<std::path::PathBuf> {
+    let data = account_dir.join("mower-data");
+    let config_link = data.join("config");
+    let tmp = data.join("tmp");
+    std::fs::create_dir_all(&tmp).map_err(|e| CoreError::io(&tmp, e))?;
+    if !config_link.exists() && !config_link.is_symlink() {
+        symlink_dir(&account_dir.join("mower"), &config_link)?;
+    }
+    Ok(data)
+}
+
+/// 跨平台目录符号链接。
+fn symlink_dir(target: &std::path::Path, link: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).map_err(|e| CoreError::io(link, e))
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).map_err(|e| {
+            CoreError::Other(format!(
+                "创建符号链接 {} 失败：{e}（Windows 需开发者模式或管理员权限；\
+                 也可改用 DockerRunner）",
+                link.display()
+            ))
+        })
+    }
+}
+
+/// 生成 ProcessRunner 启动器（`run_server.py`，仿现有部署的包装器：
+/// 按 conf 读取 token/port 起 Flask）。akops 拥有此文件（会话启动时重写，幂等）。
+pub fn render_process_launcher(mower_checkout: &std::path::Path) -> String {
+    let checkout = mower_checkout.to_string_lossy().replace('\\', "\\\\");
+    format!(
+        r#"# 由 akops 生成（ProcessRunner 会话启动器）；请勿手改
+import sys
+sys.path.insert(0, r"{checkout}")
+
+from server import app
+from arknights_mower.utils import config
+
+conf = config.conf
+token = conf.webview.token
+host = "0.0.0.0" if token else "127.0.0.1"
+port = conf.webview.port if token else 5000
+
+if token:
+    app.token = token
+
+print(f"mower 会话启动：http://127.0.0.1:{{port}}/?token={{token}}", flush=True)
+app.run(host=host, port=port)
+"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

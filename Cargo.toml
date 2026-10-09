@@ -18,13 +18,15 @@ toml = "0.9"
 thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "sync", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "sync", "fs", "io-util", "net"] }
 tracing = "0.1"
 dirs = "6"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 clap_complete = "4"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 tempfile = "3"
+rusqlite = { version = "0.37", features = ["bundled"] }
+fslock = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

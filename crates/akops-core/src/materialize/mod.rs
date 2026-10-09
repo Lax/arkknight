@@ -11,7 +11,7 @@ pub mod maa;
 pub mod mower;
 
 pub use maa::{render_profile, render_startup_task};
-pub use mower::patch_conf;
+pub use mower::{ensure_process_data_dir, patch_conf, render_process_launcher};
 
 /// mower conf.yml 白名单改写参数（会话启动瞬间，§8.3）。
 #[derive(Debug, Clone, PartialEq, Eq)]

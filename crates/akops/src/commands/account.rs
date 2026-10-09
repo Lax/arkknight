@@ -52,6 +52,11 @@ pub enum AccountCmd {
 }
 
 pub(crate) async fn run(wd: Workdir, cmd: AccountCmd) -> Result<()> {
+    // 写类子命令须持有单写者锁（D7）；读类直接走
+    let _guard = match cmd {
+        AccountCmd::List | AccountCmd::Show { .. } => None,
+        _ => Some(crate::commands::write_lock(&wd)?),
+    };
     match cmd {
         AccountCmd::Add {
             id,

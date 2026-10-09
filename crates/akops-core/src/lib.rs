@@ -22,6 +22,7 @@ pub mod device;
 pub mod doctor;
 pub mod error;
 pub mod executor;
+pub mod lock;
 pub mod materialize;
 pub mod model;
 pub mod scheduler;
