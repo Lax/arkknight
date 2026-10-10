@@ -12,6 +12,13 @@ arkknight 是一个跨平台（Linux/Windows/macOS）的明日方舟**多账号�
 
 ## 命名约定（易错，先读）
 
+### 项目名大小写（对外文案必读）
+
+- 代码、命令、路径、包名：一律小写 `arkknight`
+- 展示形（文章/UI 标题/README）：`arkKnight`（a 小写、K 大写）
+- `Arknights` **仅指鹰角官方游戏《明日方舟》**——严禁用于指本项目；
+  引用上游仓库名（如 MaaAssistantArknights）保持其原始拼写
+
 `Account` 有四个标识字段，**语义各不相干，改动时不要混**：
 
 | 字段 | 归属 | 含义 | 出现位置 |

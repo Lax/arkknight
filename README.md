@@ -2,7 +2,10 @@
 
 <div align="center">
 
-**Ark Knight —— Arknights 的谐音，也是字面意思：替博士驻守每个账号夜班的骑士。**
+**arkKnight —— Arknights 的谐音，也是字面意思：替博士驻守每个账号夜班的骑士。**
+
+> 名称书写：代码/命令/包名一律小写 `arkknight`；展示形用 `arkKnight`（a 小写 K 大写）；
+> `Arknights` 仅指鹰角官方游戏《明日方舟》，与本项目名严格区分。
 
 MAA × mower × 多账号 —— 自动上号、基建挂机、到点换人，一个二进制全管。
 
