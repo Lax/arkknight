@@ -14,6 +14,7 @@
 |---|---|
 | [`install.md`](./install.md) | 依赖（adb / MAA / mower / Python）、三种安装方式、Docker 部署要点 |
 | [`quickstart.md`](./quickstart.md) | 从零跑通：init → doctor → 设备 → 账号 → 人工登录 → 切号 → 会话 → server |
+| [`deploy.md`](./deploy.md) | 生产部署：systemd / 容器化 / socket-proxy、redroid 设备镜像升级、备份与升级 |
 | [`config.md`](./config.md) | `arkknight.toml` / 账号 / 设备全字段、四个标识字段的分工、环境变量 |
 | [`console.md`](./console.md) | Web 控制台七页、token 设置、截图、错误提示怎么读 |
 | [`faq.md`](./faq.md) | 切号失败、adb 连不上、白屏、端口冲突、调度不启动、游戏更新 |

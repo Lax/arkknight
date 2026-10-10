@@ -138,7 +138,7 @@ arkknight server --port 7200
 ### 时间窗没生效
 
 - 必须是严格 `HH:MM`（`8:00` 不合法）
-- `start < end`，**不支持跨午夜** —— `22:00-06:00` 会被拒绝，拆成两段
+- **`end` 小于 `start` 即跨过午夜**（`22:00-06:00` 合法）；仅 `start == end` 拒绝
 - 时区：调度计算按游戏日界，`scheduler.timezone` 只是展示用
 
 ### 调度器暂停了
@@ -195,6 +195,27 @@ ProcessRunner 需要容器/宿主有 `python3`（3.11+）与 mower 检出，且*
 5. **切号仍失败**通常是 MAA 的资源与游戏版本不匹配（issue #15309 类问题：
    MAA 静默失败），更新 MAA 资源
 
+### 游戏内提示「数据文件过期，请重新下载」
+
+根因：游戏服务器更新资源版本后，客户端的热更资源**下载被中途打断**
+（典型：调度会话边界强停了游戏），资源完整性校验失败，之后每次启动都提示过期。
+
+修复：
+
+1. `arkknight schedule pause`（并确认无活跃会话）
+2. 启动游戏，点「重新下载」，**等它跑完**（10-20GB，几十分钟；进度条在走即正常）
+3. 完成后进入登录界面即修复。redroid 用户此时 `docker commit` 固化镜像，
+   避免容器重建再下一遍（见 [`deploy.md`](./deploy.md) 设备镜像升级节）
+4. `arkknight schedule resume`
+
+预防：**游戏资源更新期间不要让调度器跑会话**。下载完成前的那次会话
+无论怎么起都会失败，等首次会话手动跑通再恢复自动调度。
+
+### 首次进新版本游戏很慢 / 反复下载少量资源
+
+正常的按需下载：资源清单里一部分内容在首次访问对应玩法时才拉取，
+MAA 会话内多几段等待不影响调度。
+
 ## mower 相关
 
 ### `mower 不是 git 检出`
@@ -216,7 +237,11 @@ mower 数据目录，**你在 mower UI 里的改动会持久化**。
 arkknight 只会白名单改写 `conf.yml` 的 4 个字段（adb / webview.port /
 webview.token / start_automatically），其余不碰。
 
-### `mower update` / `export` / `import` 报「尚未实现」
+### `export` / `import` / `migrate` 报「尚未实现」
+
+这三项属任务 9/后续批次。`mower update` / `mower rollback` / `mower version`
+**已实现**：pin commit 更新检出、一键回滚（见 [`../dev/docker-runner.md`](../dev/docker-runner.md)
+与 `arkknight mower --help`）。
 
 M1 未交付的命令，见设计文档 §20 里程碑。当前用 `cp -r <workdir>` 手动备份。
 

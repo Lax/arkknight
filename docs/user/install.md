@@ -8,9 +8,9 @@ arkknight 是单二进制 + Web 控制台：装好二进制后所有状态落在
 |---|---|---|
 | adb（platform-tools） | ✅ | 设备连通与切号 |
 | [maa-cli](https://github.com/MaaAssistantArknights/maa-cli) + MaaCore | ✅ | **账号切换的唯一实现**（INV-1，不可替换） |
-| Python 3.11+ | ✅ | mowe ProcessRunner 会话 |
+| Python 3.11+ | ✅ | mower ProcessRunner 会话（纯 DockerRunner 可免） |
 | [arknights-mower](https://github.com/ArkMowers/arknights-mower)（alpha 分支检出） | ✅ | 基建排班 |
-| Docker | ❌ | 仅 M2 的 RedroidDocker 建池需要；M1 用 ProcessRunner |
+| Docker | ⭕ | 可选：mower 会话容器化（DockerRunner）、redroid 建池（M2）。见 [`deploy.md`](./deploy.md) |
 
 `arkknight doctor` 会逐项体检并给出缺什么、怎么补。
 
@@ -43,17 +43,13 @@ cargo install --path crates/arkknight
 
 Arch Linux 用户可用 ebuild（`games-util/arkknight-bin`），见 [`../dev/release.md`](../dev/release.md)。
 
-## 方式三：Docker
+## 方式三：Docker / 容器化
 
-Docker 镜像在 M1 未随Release 分发（M2 交付）。容器化部署需自行构建，两点注意：
-
-1. **运行层要带 mower 与 maa-cli**：M1 的 ProcessRunner 会在容器内 `spawn python3 run_server.py`，
-   所以镜像必须有 Python + mower 检出 + `maa`（`/MAA`）+ `adb`。可基于
-   `arknights-mower` 镜像叠加 arkknight 二进制。
-2. **`server.bind` 必须是 `0.0.0.0` 而非 `127.0.0.1`**：容器内绑 loopback 收不到宿主端口
-   转发。此时设计 §17 强制要求配 `server.token`，宿主侧仍只把端口绑到 `127.0.0.1`。
-
-参考实现见 `/srv/reunion`（本机部署栈，含 compose 与凭据管理）。
+Release 未分发镜像，容器化部署自行构建：**mower 运行镜像 + arkknight 二进制 +
+maa-cli + adb**。关键点（容器内 bind 必须 `0.0.0.0` + 配 token 等）与
+compose/redroid 组网、socket-proxy、镜像升级流程，见专文
+[`deploy.md`](./deploy.md)；mower 会话容器化（DockerRunner）另见
+[`../dev/docker-runner.md`](../dev/docker-runner.md)。
 
 ## 依赖安装要点
 
@@ -93,4 +89,5 @@ cd ~/src/arknights-mower && pip install -r requirements.txt
 
 ## 下一步
 
-装好后按 [`quickstart.md`](./quickstart.md) 从零跑通。
+装好后按 [`quickstart.md`](./quickstart.md) 从零跑通；长期运行/服务器部署见
+[`deploy.md`](./deploy.md)。

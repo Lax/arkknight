@@ -229,7 +229,7 @@ arkknight/
 | `account_name` | string | **MAA 切号匹配串**（官服=打码手机号片段，B服=昵称；须全局唯一，`doctor` 校验） |
 | `uid` | string? | 游戏 UID（纯数字）。配置后切号成功即跑 UID 核验（§9.4）；缺省跳过核验（doctor 告警串数据风险） |
 | `enabled` | bool | 禁用后不参与调度 |
-| `schedule.windows` | `[{start,end,executor,task?}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa`；maa 窗口可指定 `task`（accounts/<key>/maa/tasks/ 下的任务名，缺省拒绝调度 maa 窗口）；窗口须 start<end（时钟日内；end 可为 24:00 午夜端点，跨午夜时段拆多段表达） |
+| `schedule.windows` | `[{start,end,executor,task?}]` | 游戏日界内的每日时间窗；executor ∈ `mower\|maa`；maa 窗口可指定 `task`（accounts/<key>/maa/tasks/ 下的任务名，缺省拒绝调度 maa 窗口）；窗口按本地时钟表达，`end < start` 即跨过自然午夜（如 22:00-02:00）；仅 start==end 拒绝 |
 | `schedule.priority` | int 0-100 | 队列优先级，默认 50 |
 | `schedule.slice` | duration | 时间片长度，覆盖全局默认（默认 2h） |
 | `schedule.runner` | `process \| docker` | mower 会话运行形态（ADR-0001 D5），默认 `process`；MAA 会话不受影响 |
@@ -429,7 +429,7 @@ Created → Queued ─(获得设备租约)→ Switching → Running ─┬─(sl
 - **退避**：连续失败按 `{initial:5m, factor:2, max:60m}` 指数退避该账号的下次调度，避免「空扫死锁」类问题（吸取 mower issue 草稿教训：失败任务必须退避，不得 5 分钟空转重试）
 - **签到保护窗**（M1 简化实现）：每账号时间片内，mower 自身负责森空岛签到等；arkknight 保证每账号每日至少一个完整时间片（`daily_guarantee = true` 默认开）
 - **M1 实现备注**（实现与设计的差异备案）：退避状态为 daemon 内存态（重启清零，事件留痕于
-  `session_events`）；时间窗不跨午夜（start<end，end 可为 24:00；跨午夜时段拆多段表达，配置校验拒绝）；`daily_guarantee` 仅告警
+  `session_events`）；时间窗按本地时钟环形匹配（end<start 即跨午夜，仅 start==end 拒绝）；`daily_guarantee` 仅告警
   （游戏日内有窗口但零会话时记录事件，不主动补跑，避免与窗口语义冲突）；时间窗可带 `task`
   字段指定 maa 任务（§6.1）
 

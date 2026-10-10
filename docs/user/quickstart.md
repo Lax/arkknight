@@ -130,7 +130,9 @@ arkknight server --open
 后台常驻：调度引擎（15s 轮询）+ REST API + Web 控制台（<http://127.0.0.1:7100>）。
 
 - 多账号按时间片轮转，优先级高的先
-- 未设时间窗的账号不限时段参与轮转
+- **时间窗为空的账号不参与自动调度**（仅手动会话）——控制台账号「详情 / 任务」页
+  配时间窗，或用「按事项分割全天」一键生成避让本地事项的窗口
+- 跨自然天窗口直接写（如 `22:00-02:00`），end 小于 start 即可
 - 失败任务指数退避（5m → 60m 封顶），不空转重试
 
 配了 `server.token` 时访问 <http://127.0.0.1:7100/?token=<值>>，前端会存 localStorage。
@@ -150,9 +152,9 @@ arkknight account add main  --server official --account-name '123****8901' --uid
 arkknight account add alt   --server official --account-name '138****0002' --uid 1000999888
 arkknight account add bili  --server bilibili --account-name '小号昵称'
 
-# 时间窗：只在指定时段参与轮转（不跨午夜）
+# 时间窗：只在指定时段参与轮转（end < start 即跨过午夜，如 22:00-02:00）
 arkknight account add night --server official --account-name '156****0033' \
-  --window '00:00-06:00:mower'
+  --window '22:00-02:00:mower'
 
 arkknight provision main && arkknight provision alt && arkknight provision bili
 arkknight server
@@ -163,7 +165,8 @@ arkknight server
 ## 下一步
 
 - 配置细节：[`config.md`](./config.md)
-- 控制台七页说明：[`console.md`](./console.md)
+- 控制台说明（含账号详情页、时间轴、任务内容）：[`console.md`](./console.md)
+- 长期运行 / 容器化 / 设备镜像升级：[`deploy.md`](./deploy.md)
 - 遇到问题：[`faq.md`](./faq.md)
 
 > ⚠️ 使用自动化工具的风险由用户自担；请勿用于代练等商业用途。

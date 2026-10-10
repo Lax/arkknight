@@ -19,7 +19,8 @@
 | `adb_path` | `adb` | `init` 探测到绝对路径时会写绝对路径（避免 PATH 差异） |
 | `maa_dir` | `~/.local/share/arkknight/maa` | maa-cli 安装根；`arkknight maa install/update` 用 |
 | `mower_dir` | `~/src/arknights-mower` | mower 检出（ProcessRunner 需要）。**改完跑 doctor** —— mower alpha 会动 schema |
-| `docker_mower_image` | `arkknight-mower:latest` | DockerRunner 用（M2） |
+| `docker_mower_image` | `arkknight-mower:latest` | DockerRunner 的 mower 会话镜像（见 [`deploy.md`](./deploy.md)、[`../dev/docker-runner.md`](../dev/docker-runner.md)） |
+| `docker_host` | `""`（本机默认） | Docker 端点：`unix:///…`、`tcp://host:port`；容器内部署指向 socket-proxy。doctor 用同一通道探测 |
 
 ### `[server]`
 
@@ -58,6 +59,18 @@ ports:
 **两个超时源**：时间片到期（`slice_deadline`）与硬上限（`max_runtime_deadline`），
 任一触发即 Draining。
 
+### `[[local_events]]`（本地定时事项）
+
+标注用列表：控制台时间轴上显示、供选窗避让（调度器不强制避让），
+调度页可表单管理：
+
+```toml
+[[local_events]]
+name = "网络闪断"
+start = "18:00"
+end = "18:05"        # end < start = 跨过午夜
+```
+
 ### `[ports]`
 
 | 字段 | 默认 | 说明 |
@@ -84,10 +97,11 @@ enabled = true
 [schedule]
 priority = 50                         # 0-100，同一时刻竞争时的抢占顺序
 slice = "90m"                         # 覆盖全局 default_slice
+runner = "process"                    # mower 会话运行形态：process | docker
 
 [[schedule.windows]]
 start = "08:00"                       # 严格 HH:MM，24 小时制
-end = "12:00"                         # 须 start < end，不跨午夜
+end = "12:00"                         # end < start = 跨过自然午夜（如 22:00-02:00）
 executor = "mower"                    # mower | maa
 task = "roguelike"                    # 仅 maa 窗口需要
 ```
@@ -107,9 +121,13 @@ arkknight account show main          # 原样打印文件
 ### 时间窗规则
 
 - 严格 `HH:MM`（`8:00` 不合法，要 `08:00`）
-- `start < end`，**不支持跨午夜**。跨午夜请拆成两段
+- **`end` 小于 `start` 即跨过自然午夜**（如 `22:00-02:00`），无需拆段；
+  `start == end` 不合法（零长度）
 - `executor = maa` 时必须给 `task`（`accounts/<key>/maa/tasks/` 下的任务名），否则拒绝调度
-- 不填时间窗 = 不限时段，按优先级参与轮转
+- **不填时间窗 = 不参与自动调度**（仅手动会话）。控制台「详情 / 任务 →
+  按事项分割全天」可按本地事项一键生成互补窗口
+- 控制台时间轴上有游戏日界（`scheduler.game_day_boundary`，默认 04:00）与
+  本地事项标注，选窗时直观避让
 
 ## 设备：devices/<name>.toml
 
