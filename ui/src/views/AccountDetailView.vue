@@ -59,6 +59,84 @@ const taskContent = ref('')
 const taskDirty = ref(false)
 const savingTask = ref(false)
 
+/** 把游戏日（界→次日界）按本地事项做环形减法，生成互补时间窗。
+ *  例：日界 04:00 + 事项 18:00-18:05 → 「04:00-18:00」「18:05-04:00」。
+ *  半开区间语义下端点天然精确（18:00 与 04:00 整点归属右侧窗口之外）。 */
+function splitGameDayByEvents(): { start: string; end: string; executor: string; task: string }[] {
+  const m = (t: string): number => {
+    const [h, mm] = t.split(':').map(Number)
+    return h * 60 + mm
+  }
+  const hm = (x: number): string =>
+    `${String(Math.floor(x / 60) % 24).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`
+  const B = m(gameDayBoundary.value)
+  const norm = (x: number): number => (((x - B) % 1440) + 1440) % 1440
+
+  const evs = localEvents.value
+    .map((e) => {
+      const a = norm(m(e.start))
+      const len = (((m(e.end) - m(e.start)) % 1440) + 1440) % 1440
+      return { a, len }
+    })
+    .filter((x) => x.len > 0)
+  if (!evs.length) return []
+
+  // 跨 0 点的事项拆两段后排序合并
+  const parts: { a: number; b: number }[] = []
+  for (const { a, len } of evs) {
+    if (a + len <= 1440) parts.push({ a, b: a + len })
+    else {
+      parts.push({ a, b: 1440 })
+      parts.push({ a: 0, b: a + len - 1440 })
+    }
+  }
+  parts.sort((x, y) => x.a - y.a)
+  const merged: { a: number; b: number }[] = []
+  for (const p of parts) {
+    const last = merged[merged.length - 1]
+    if (last && p.a <= last.b) last.b = Math.max(last.b, p.b)
+    else merged.push({ ...p })
+  }
+
+  const gaps: { a: number; b: number }[] = []
+  let cursor = 0
+  for (const p of merged) {
+    if (p.a > cursor) gaps.push({ a: cursor, b: p.a })
+    cursor = Math.max(cursor, p.b)
+  }
+  if (cursor < 1440) gaps.push({ a: cursor, b: 1440 })
+
+  return gaps.map((g) => {
+    const start = (g.a + B) % 1440
+    const end = (g.b + B) % 1440
+    // 执行器沿用覆盖原起点的既有窗口配置，缺省 mower
+    const prev = sched.value.windows.find(
+      (w) => norm(m(w.start)) === g.a && w.executor,
+    )
+    return {
+      start: hm(start),
+      end: hm(end),
+      executor: prev?.executor ?? 'mower',
+      task: prev?.task ?? '',
+    }
+  }).filter((w) => w.start !== w.end)
+}
+
+function applyGameDaySplit(): void {
+  const generated = splitGameDayByEvents()
+  if (!generated.length) {
+    message.warning('没有本地定时事项可分割（调度页可录入），或事项已覆盖全天')
+    return
+  }
+  const desc = generated.map((w) => `${w.start}-${w.end}`).join('、')
+  if (!confirm(`按本地事项分割全天，生成 ${generated.length} 个时间窗：${desc}\n将替换现有时间窗（保存前不落盘），继续？`)) {
+    return
+  }
+  sched.value.windows = generated
+  checkOverlaps()
+  message.success(`已生成 ${generated.length} 个时间窗：${desc}（点「保存调度配置」落盘）`)
+}
+
 /** 时间窗与本地定时事项的重叠提示（仅提示，调度器不强制避让） */
 const overlapWarnings = ref<string[]>([])
 function checkOverlaps(): void {
@@ -297,9 +375,12 @@ onMounted(load)
     <!-- ===== 调度 ===== -->
     <n-card title="调度" size="small">
       <template #header-extra>
-        <n-text depth="3" style="font-size: 12px">
-          时间窗为空 = 不参与自动调度（仅手动会话）
-        </n-text>
+        <n-space align="center" size="small">
+          <n-text depth="3" style="font-size: 12px">
+            时间窗为空 = 不参与自动调度（仅手动会话）
+          </n-text>
+          <n-button size="tiny" @click="applyGameDaySplit">按事项分割全天</n-button>
+        </n-space>
       </template>
       <n-form label-placement="top" :show-feedback="false" style="max-width: 860px">
         <div class="form-grid">

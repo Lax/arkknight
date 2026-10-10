@@ -182,6 +182,35 @@ mod tests {
     }
 
     #[test]
+    fn game_day_split_windows() {
+        // 「按事项分割全天」产物：日界 04:00 + 事项 18:00-18:05
+        // → 04:00-18:00 + 18:05-04:00（半开端点整点表达，末窗跨自然天）
+        let windows = [
+            window("04:00", "18:00", ScheduledExecutor::Mower),
+            window("18:05", "04:00", ScheduledExecutor::Mower),
+        ];
+        // 窗口内命中：日界起点、白天、晚间段、次日凌晨尾段
+        assert!(active_window(at(2026, 10, 9, 4, 0), &windows).is_some());
+        assert!(active_window(at(2026, 10, 9, 12, 0), &windows).is_some());
+        assert!(active_window(at(2026, 10, 9, 17, 59), &windows).is_some());
+        assert!(active_window(at(2026, 10, 9, 18, 5), &windows).is_some());
+        assert!(active_window(at(2026, 10, 10, 3, 59), &windows).is_some());
+        // 事项间隙（18:00-18:05）与两窗端点之外不命中
+        assert!(active_window(at(2026, 10, 9, 18, 0), &windows).is_none());
+        assert!(active_window(at(2026, 10, 9, 18, 4), &windows).is_none());
+        // 次日 04:00 整点 = 新游戏日第一窗开启
+        assert!(active_window(at(2026, 10, 10, 4, 0), &windows).is_some());
+        // 用户手写的 17:59/03:59 形态同样合法且等价（末分钟归属差异）
+        let inclusive = [
+            window("04:00", "17:59", ScheduledExecutor::Mower),
+            window("18:05", "03:59", ScheduledExecutor::Mower),
+        ];
+        assert!(active_window(at(2026, 10, 9, 12, 0), &inclusive).is_some());
+        assert!(active_window(at(2026, 10, 10, 3, 58), &inclusive).is_some());
+        assert!(active_window(at(2026, 10, 10, 3, 59), &inclusive).is_none());
+    }
+
+    #[test]
     fn until_start() {
         let w = window("08:00", "12:00", ScheduledExecutor::Mower);
         assert_eq!(
