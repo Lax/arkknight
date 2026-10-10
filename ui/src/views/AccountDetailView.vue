@@ -328,7 +328,8 @@ onMounted(load)
         </n-alert>
         <n-space align="center" style="margin: 8px 0 0">
           <n-text depth="3" style="font-size: 12px">
-            时间窗明细（与上方时间轴双向同步；本地时区，窗口须 start &lt; end）
+            时间窗明细（与上方时间轴双向同步；本地时区，窗口须 start &lt; end，
+            end 可到 24:00；跨午夜时段请拆两段，如 22:00-24:00 + 00:00-02:00）
           </n-text>
           <n-button size="tiny" @click="addWindow">+ 加一行</n-button>
         </n-space>
@@ -336,7 +337,7 @@ onMounted(load)
         <div v-for="(w, i) in sched.windows" :key="i" class="window-row">
           <n-input v-model:value="w.start" placeholder="08:00" style="width: 90px" />
           <span style="color: gray">–</span>
-          <n-input v-model:value="w.end" placeholder="12:00" style="width: 90px" />
+          <n-input v-model:value="w.end" placeholder="12:00（可 24:00）" style="width: 110px" />
           <n-select v-model:value="w.executor" :options="executorOptions" style="width: 180px" />
           <n-input
             v-if="w.executor === 'maa'"

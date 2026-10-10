@@ -231,10 +231,10 @@ impl LocalEvent {
             return Err(CoreError::Config("本地事项 name 不能为空".into()));
         }
         crate::model::account::validate_hhmm(&self.start, "本地事项 start")?;
-        crate::model::account::validate_hhmm(&self.end, "本地事项 end")?;
+        crate::model::account::validate_hhmm_opt(&self.end, "本地事项 end", true)?;
         if self.start >= self.end {
             return Err(CoreError::Config(format!(
-                "本地事项 {} {}-{} 不合法：须 start < end（不支持跨午夜）",
+                "本地事项 {} {}-{} 不合法：须 start < end。跨午夜时段拆多段表达，                 同一名称可录多条",
                 self.name, self.start, self.end
             )));
         }
@@ -726,11 +726,15 @@ mod tests {
         cfg.local_events[0].start = "18:05".into();
         cfg.local_events[0].end = "18:00".into();
         assert!(cfg.validate().is_err());
-        // 跨午夜不支持（明确报错）
+        // 跨午夜不支持（明确报错：拆多段表达）
         cfg.local_events[0].start = "23:00".into();
         cfg.local_events[0].end = "01:00".into();
         let msg = cfg.validate().unwrap_err().to_string();
-        assert!(msg.contains("不支持跨午夜"), "{msg}");
+        assert!(msg.contains("拆多段表达"), "{msg}");
+        // end 可为 24:00 午夜端点（多段的前段）
+        cfg.local_events[0].start = "23:50".into();
+        cfg.local_events[0].end = "24:00".into();
+        cfg.validate().unwrap();
     }
 
     #[test]

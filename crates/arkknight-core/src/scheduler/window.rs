@@ -8,12 +8,13 @@ use chrono::{Datelike, Duration, Local, NaiveTime, Timelike};
 
 use crate::model::{ScheduledExecutor, TimeWindow};
 
-/// `HH:MM` → 当日分钟数。
+/// `HH:MM` → 当日分钟数。`24:00`（午夜端点）→ 1440：跨午夜时段以
+/// 多段表达（如 22:00-24:00 + 00:00-02:00），此端点是其中前段的自然结尾。
 pub fn hhmm_to_minutes(s: &str) -> Option<u32> {
     let (h, m) = s.split_once(':')?;
     let h: u32 = h.parse().ok()?;
     let m: u32 = m.parse().ok()?;
-    if h > 23 || m > 59 {
+    if m > 59 || h > 24 || (h == 24 && m != 0) {
         return None;
     }
     Some(h * 60 + m)
@@ -112,9 +113,26 @@ mod tests {
     fn hhmm_parse() {
         assert_eq!(hhmm_to_minutes("04:00"), Some(240));
         assert_eq!(hhmm_to_minutes("23:59"), Some(1439));
-        assert_eq!(hhmm_to_minutes("24:00"), None);
+        assert_eq!(hhmm_to_minutes("24:00"), Some(1440), "午夜端点合法");
+        assert_eq!(hhmm_to_minutes("24:30"), None, "24 只允许整点");
         // 解析层宽松（单位数字可过）；严格 HH:MM 由模型校验层拒绝
         assert_eq!(hhmm_to_minutes("4:00"), Some(240));
+    }
+
+    #[test]
+    fn window_may_end_at_midnight() {
+        // 22:00-24:00 合法且 [start,end) 语义成立：23:59 命中、午夜后不命中
+        let windows = [window("22:00", "24:00", ScheduledExecutor::Mower)];
+        assert!(active_window(at(2026, 10, 9, 23, 59), &windows).is_some());
+        assert!(active_window(at(2026, 10, 9, 21, 59), &windows).is_none());
+        // 跨午夜时段 = 两段：22:00-24:00 + 00:00-02:00
+        let split = [
+            window("22:00", "24:00", ScheduledExecutor::Mower),
+            window("00:00", "02:00", ScheduledExecutor::Mower),
+        ];
+        assert!(active_window(at(2026, 10, 9, 23, 30), &split).is_some());
+        assert!(active_window(at(2026, 10, 10, 1, 0), &split).is_some());
+        assert!(active_window(at(2026, 10, 10, 2, 1), &split).is_none());
     }
 
     #[test]
