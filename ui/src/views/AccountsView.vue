@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   NAlert, NButton, NCard, NDivider, NEmpty, NForm, NFormItem, NInput, NSelect, NSpace, NTag,
   NInputNumber, NText, useMessage,
@@ -7,6 +8,7 @@ import {
 import { api, type AccountInfo } from '../api'
 
 const message = useMessage()
+const router = useRouter()
 const accounts = ref<AccountInfo[]>([])
 const showCreate = ref(false)
 const creating = ref(false)
@@ -165,6 +167,9 @@ onMounted(refresh)
           </template>
           <template #header-extra>
             <n-space size="small">
+              <n-button size="tiny" type="primary" ghost @click="router.push(`/accounts/${a.key}`)">
+                详情 / 任务
+              </n-button>
               <n-button size="tiny" @click="toggle(a)">
                 {{ a.enabled ? '停用' : '启用' }}
               </n-button>
@@ -186,6 +191,9 @@ onMounted(refresh)
             <span v-if="a.slice">时间片：{{ a.slice }}</span>
             <span v-for="(w, i) in a.windows" :key="i">
               时间窗：{{ w.start }}–{{ w.end }} {{ w.executor }}{{ w.task ? `:${w.task}` : '' }}
+            </span>
+            <span v-if="!a.windows.length" style="color: var(--n-warning-color, #f0a020)">
+              无时间窗 · 不参与自动调度
             </span>
           </div>
 
@@ -300,8 +308,9 @@ onMounted(refresh)
           </n-form-item>
         </div>
 
-        <n-alert v-if="!form.windowStart || !form.windowEnd" type="info" :bordered="false" style="margin-top: 4px">
-          未填完整时间窗：该账号将不限定时段，按优先级与队列参与调度。
+        <n-alert v-if="!form.windowStart || !form.windowEnd" type="warning" :bordered="false" style="margin-top: 4px">
+          未填完整时间窗：该账号**不参与自动调度**（仅手动会话）。
+          创建后可在「详情 / 任务」页补充时间窗——那里支持多行窗口与 maa 任务引用。
         </n-alert>
 
         <n-alert

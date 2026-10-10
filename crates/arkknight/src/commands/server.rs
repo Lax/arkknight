@@ -4,7 +4,9 @@
 //! 非空时 Bearer / `?token=`）：
 //! - 状态/调度：`GET /api/status`、`POST /api/schedule/pause|resume`
 //! - 会话：`GET|POST /api/sessions`、`POST /api/sessions/{id}/drain`、`GET /api/sessions/{id}/logs`
-//! - 账号：`GET|POST /api/accounts`、`PATCH|DELETE /api/accounts/{key}`
+//! - 账号：`GET|POST /api/accounts`、`GET|PATCH|DELETE /api/accounts/{key}`、
+//!   任务内容 `GET|PUT /api/accounts/{key}/plan` 与
+//!   `GET|PUT|DELETE /api/accounts/{key}/maa-tasks/{name}`（活跃会话时写类 409）
 //! - 设备：`GET /api/devices`、`POST /api/devices/{name}/test`、`GET /api/devices/{name}/screenshot`
 //! - 维护：`GET /api/doctor`
 //! - 实时：`WS /api/ws?logs=<id>`（日志 tail）、`WS /api/ws?events=1`（事件流）
@@ -216,7 +218,23 @@ fn router(state: AppState) -> Router {
         )
         .route(
             "/api/accounts/{key}",
-            axum::routing::patch(api_account_patch).delete(api_account_delete),
+            axum::routing::get(api_account_get)
+                .patch(api_account_patch)
+                .delete(api_account_delete),
+        )
+        .route(
+            "/api/accounts/{key}/plan",
+            axum::routing::get(api_plan_get).put(api_plan_put),
+        )
+        .route(
+            "/api/accounts/{key}/maa-tasks",
+            axum::routing::get(api_maa_tasks_list),
+        )
+        .route(
+            "/api/accounts/{key}/maa-tasks/{name}",
+            axum::routing::get(api_maa_task_get)
+                .put(api_maa_task_put)
+                .delete(api_maa_task_delete),
         )
         .route("/api/devices", axum::routing::get(api_devices))
         .route(
@@ -324,6 +342,10 @@ async fn api_status(State(s): State<AppState>) -> impl IntoResponse {
                 json!({
                     "key": a.key, "display_name": a.display_name, "server": a.server.to_string(),
                     "enabled": a.enabled, "priority": a.schedule.priority,
+                    "runner": match a.schedule.runner {
+                        arkknight_core::model::RunnerKind::Docker => "docker",
+                        arkknight_core::model::RunnerKind::Process => "process",
+                    },
                     "windows": a.schedule.windows.iter().map(|w| json!({
                         "start": w.start, "end": w.end,
                         "executor": match w.executor {
@@ -585,6 +607,10 @@ fn account_json(a: &arkknight_core::model::Account) -> serde_json::Value {
         "account_name": a.account_name, "enabled": a.enabled, "uid": a.uid,
         "priority": a.schedule.priority,
         "slice": a.schedule.slice.as_ref().map(|d| d.to_string()),
+        "runner": match a.schedule.runner {
+            arkknight_core::model::RunnerKind::Docker => "docker",
+            arkknight_core::model::RunnerKind::Process => "process",
+        },
         "windows": a.schedule.windows.iter().map(|w| json!({
             "start": w.start, "end": w.end,
             "executor": match w.executor {
@@ -708,6 +734,15 @@ fn account_create_inner(
     Ok(acc)
 }
 
+/// 区分「字段缺失」（外层 None，#[serde(default)]）与「显式 null」（Some(None)）。
+fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(de).map(Some)
+}
+
 #[derive(serde::Deserialize)]
 struct AccountPatchBody {
     #[serde(default)]
@@ -720,6 +755,20 @@ struct AccountPatchBody {
     display_name: Option<String>,
     #[serde(default)]
     uid: Option<String>,
+    /// 服务器类型（影响 client_type/包名）
+    #[serde(default)]
+    server: Option<String>,
+    /// 时间窗整体替换：缺省=不变，`[]`=清空（退出自动调度）
+    #[serde(default)]
+    windows: Option<Vec<WindowBody>>,
+    /// 时间片：缺省=不变，null/空串=回到全局默认，否则 `HumanDuration`（如 90m）
+    /// serde 默认把显式 null 反序列化成外层 None（与「字段缺失」不可区分），
+    /// double_option 包一层保住「null = 清除」语义
+    #[serde(default, deserialize_with = "double_option")]
+    slice: Option<Option<String>>,
+    /// mower 运行形态：process | docker
+    #[serde(default)]
+    runner: Option<String>,
 }
 
 async fn api_account_patch(
@@ -758,6 +807,65 @@ async fn api_account_patch(
     if let Some(v) = body.uid {
         acc.uid = if v.is_empty() { None } else { Some(v) };
     }
+    if let Some(v) = &body.server {
+        match v.parse::<arkknight_core::model::Server>() {
+            Ok(sv) => acc.server = sv,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("server {v:?} 不合法"), "hint": "official | bilibili"})),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Some(windows) = body.windows {
+        match windows
+            .into_iter()
+            .map(WindowBody::into_model)
+            .collect::<anyhow::Result<Vec<_>>>()
+        {
+            Ok(w) => acc.schedule.windows = w,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Some(v) = body.slice {
+        acc.schedule.slice = match v.as_deref().map(str::trim) {
+            None | Some("") | Some("default") => None,
+            Some(sv) => match arkknight_core::config::HumanDuration::parse(sv) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": format!("时间片 {sv:?} 不合法：{e}")})),
+                    )
+                        .into_response();
+                }
+            },
+        };
+    }
+    if let Some(v) = body.runner {
+        acc.schedule.runner = match v.as_str() {
+            "process" => arkknight_core::model::RunnerKind::Process,
+            "docker" => arkknight_core::model::RunnerKind::Docker,
+            other => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": format!("runner {other:?} 不合法"),
+                        "hint": "process=本地进程；docker=会话容器（需 paths.docker_host 可达且镜像就绪，见 docs/dev/docker-runner.md）"
+                    })),
+                )
+                    .into_response();
+            }
+        };
+    }
     if let Err(e) = acc.validate() {
         return (
             StatusCode::BAD_REQUEST,
@@ -770,6 +878,258 @@ async fn api_account_patch(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// 单账号读取（控制台详情页用；此前 PATCH 有而 GET 无，注释见测试 auth 用例）。
+async fn api_account_get(State(s): State<AppState>, Path(key): Path<String>) -> impl IntoResponse {
+    match s.wd.load_account(&key) {
+        Ok(a) => Json(account_json(&a)).into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("账号 {key} 不存在")})),
+        )
+            .into_response(),
+    }
+}
+
+/// 该账号是否有非终态会话（运行中的 mower 实例会回写 plan，写类操作必须避让）。
+fn active_session_conflict(s: &AppState, key: &str) -> Option<axum::response::Response> {
+    match s.store.active_session_by_account_key(key) {
+        Ok(Some(sess)) => Some(
+            (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": format!("账号 {key} 有活跃会话 #{}（{}）", sess.id, sess.state),
+                    "hint": "运行中的 mower 实例会在 UI 保存时回写 plan；请先 drain 会话再改，改动在下个时间片生效",
+                })),
+            )
+                .into_response(),
+        ),
+        _ => None,
+    }
+}
+
+/// mower 基建排班计划（accounts/<key>/mower/plan.json 原文）。
+async fn api_plan_get(State(s): State<AppState>, Path(key): Path<String>) -> impl IntoResponse {
+    if let Err(e) = s.wd.load_account(&key) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+    }
+    let path = s.wd.mower_plan_path(&key);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            Json(json!({"exists": true, "content": content, "path": path})).into_response()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Json(json!({"exists": false, "content": null, "path": path})).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("读取 {} 失败：{e}", path.display())})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PlanPutBody {
+    content: String,
+}
+
+async fn api_plan_put(
+    State(s): State<AppState>,
+    Path(key): Path<String>,
+    Json(body): Json<PlanPutBody>,
+) -> impl IntoResponse {
+    if let Err(e) = s.wd.load_account(&key) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+    }
+    if let Some(resp) = active_session_conflict(&s, &key) {
+        return resp;
+    }
+    // 语法校验：mower 自身加载时还会做完整 schema 校验，此处只挡低级错误
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&body.content);
+    if let Err(e) = parsed {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("plan.json 不是合法 JSON：{e}"),
+                "hint": "schema 参考 mower 源码 arknights_mower/utils/config/plan.py（default/plan1/conf/backup_plans）",
+            })),
+        )
+            .into_response();
+    }
+    let path = s.wd.mower_plan_path(&key);
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("建目录失败：{e}")})),
+        )
+            .into_response();
+    }
+    match std::fs::write(&path, &body.content) {
+        Ok(()) => Json(json!({"ok": true, "path": path})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("写入 {} 失败：{e}", path.display())})),
+        )
+            .into_response(),
+    }
+}
+
+/// maa 自定义任务列表（accounts/<key>/maa/tasks/*.toml）。
+async fn api_maa_tasks_list(
+    State(s): State<AppState>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = s.wd.load_account(&key) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+    }
+    let dir = s.wd.maa_tasks_dir(&key);
+    let mut tasks = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut names: Vec<String> = rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+            .filter_map(|e| {
+                e.path()
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(String::from)
+            })
+            .collect();
+        names.sort();
+        for n in names {
+            let size = std::fs::metadata(dir.join(format!("{n}.toml")))
+                .map(|m| m.len())
+                .unwrap_or(0);
+            tasks.push(json!({"name": n, "size": size}));
+        }
+    }
+    Json(json!({"tasks": tasks, "dir": dir})).into_response()
+}
+
+async fn api_maa_task_get(
+    State(s): State<AppState>,
+    Path((key, name)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let path = match s.wd.maa_task_path(&key, &name) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Json(json!({"name": name, "content": content, "path": path})).into_response(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("任务 {name} 不存在"), "hint": format!("目录：{}", s.wd.maa_tasks_dir(&key).display())})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("读取失败：{e}")})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct TaskPutBody {
+    content: String,
+}
+
+async fn api_maa_task_put(
+    State(s): State<AppState>,
+    Path((key, name)): Path<(String, String)>,
+    Json(body): Json<TaskPutBody>,
+) -> impl IntoResponse {
+    if let Err(e) = s.wd.load_account(&key) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response();
+    }
+    if let Some(resp) = active_session_conflict(&s, &key) {
+        return resp;
+    }
+    let path = match s.wd.maa_task_path(&key, &name) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    // 语法校验（MAA 加载时还有 schema 校验）
+    if let Err(e) = toml::from_str::<toml::Value>(&body.content) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("任务不是合法 TOML：{e}")})),
+        )
+            .into_response();
+    }
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("建目录失败：{e}")})),
+        )
+            .into_response();
+    }
+    match std::fs::write(&path, &body.content) {
+        Ok(()) => Json(json!({"ok": true, "path": path})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("写入失败：{e}")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_maa_task_delete(
+    State(s): State<AppState>,
+    Path((key, name)): Path<(String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    if q.get("confirm").map(|v| v.as_str()) != Some("1") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "缺少 confirm=1"})),
+        )
+            .into_response();
+    }
+    if let Some(resp) = active_session_conflict(&s, &key) {
+        return resp;
+    }
+    let path = match s.wd.maa_task_path(&key, &name) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("任务 {name} 不存在")})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("删除失败：{e}")})),
         )
             .into_response(),
     }
@@ -1370,6 +1730,267 @@ mod tests {
         .to_string();
         assert!(bad.contains("uid"), "非数字 uid 应报错：{bad}");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 内容 API 测试工作目录：init + 一个账号 + 独立内存库。
+    fn content_test_state() -> (AppState, Workdir, Arc<Store>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = Workdir::init(tmp.path(), &AkopsConfig::default()).unwrap();
+        account_create_inner(
+            &wd,
+            AccountCreateBody {
+                key: "main".into(),
+                display_name: None,
+                server: "official".into(),
+                account_name: "123****8901".into(),
+                uid: None,
+                priority: None,
+                windows: vec![],
+            },
+        )
+        .unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let state = AppState {
+            wd: wd.clone(),
+            shared: Arc::new(EngineShared {
+                wd: wd.clone(),
+                cfg: AkopsConfig::default(),
+                store: store.clone(),
+                device: Device {
+                    name: "d1".into(),
+                    backend: DeviceBackendKind::External,
+                    connection: DeviceConnection {
+                        host_adb: "127.0.0.1:5555".into(),
+                        docker_adb: None,
+                        docker_network: None,
+                    },
+                    notes: String::new(),
+                },
+                factory: Arc::new(|_, _| Err("测试不需要真实执行器".to_string())),
+                switch_timeout: Duration::from_secs(1),
+                maa_bin: "maa".into(),
+                backoff_override: None,
+            }),
+            store: store.clone(),
+            handle: {
+                let (_, h) = EngineHandle::new();
+                h
+            },
+            token: String::new(),
+        };
+        (state, wd, store, tmp)
+    }
+
+    /// PATCH 全字段：windows 整体替换 / slice null 回全局 / runner / server。
+    #[tokio::test]
+    async fn patch账号支持调度与运行形态字段() {
+        let (state, wd, _store, _tmp) = content_test_state();
+        let app = router(state.clone());
+        let body = json!({
+            "windows": [{"start": "08:00", "end": "12:00", "executor": "mower"}],
+            "slice": "90m",
+            "runner": "docker",
+            "server": "bilibili",
+            "display_name": "小号"
+        });
+        let res = app
+            .oneshot(
+                HttpRequest::patch("/api/accounts/main")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "PATCH 应成功");
+        let acc = wd.load_account("main").unwrap();
+        assert_eq!(acc.schedule.windows.len(), 1);
+        assert_eq!(acc.schedule.windows[0].start, "08:00");
+        assert_eq!(
+            acc.schedule.slice.as_ref().map(|d| d.0.as_secs()),
+            Some(5400)
+        );
+        assert_eq!(
+            acc.schedule.runner,
+            arkknight_core::model::RunnerKind::Docker
+        );
+        assert_eq!(acc.server, arkknight_core::model::Server::Bilibili);
+
+        // slice: null 回到全局默认；windows: [] 清空 → 不再参与自动调度
+        let body = json!({"slice": null, "windows": []});
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::patch("/api/accounts/main")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let acc = wd.load_account("main").unwrap();
+        assert!(acc.schedule.slice.is_none(), "slice null 应回全局默认");
+        assert!(acc.schedule.windows.is_empty(), "windows [] 应清空");
+    }
+
+    /// mower plan：GET 未创建 → PUT 合法 JSON 落盘 → GET 读回；
+    /// 活跃会话时 PUT 409；非法 JSON 400。
+    #[tokio::test]
+    async fn plan读写与会话避让() {
+        let (state, wd, store, _tmp) = content_test_state();
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::get("/api/accounts/main/plan")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["exists"], false);
+
+        // 活跃会话 → 409
+        store
+            .create_session(arkknight_core::store::NewSession {
+                account_key: "main",
+                device_name: "d1",
+                executor: "mower",
+                runner: Some("process"),
+                state: "running",
+                mower_port: None,
+                slice_deadline_ms: None,
+                max_runtime_deadline_ms: None,
+            })
+            .unwrap();
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::put("/api/accounts/main/plan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"content": "{}"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CONFLICT, "活跃会话须 409");
+
+        // 结束会话后可写
+        let id = store.list_sessions(1).unwrap()[0].id;
+        store
+            .finish_session(id, "finished", "cancelled", None, "test")
+            .unwrap();
+        let plan = r#"{"default":"plan1","plan1":{},"conf":{"ling_xi":1},"backup_plans":[]}"#;
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::put("/api/accounts/main/plan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"content": plan}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            std::fs::read_to_string(wd.mower_plan_path("main")).unwrap(),
+            plan
+        );
+
+        // 非法 JSON → 400
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::put("/api/accounts/main/plan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"content": "{oops"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// maa 任务：put/list/get/delete 全链 + 路径穿越拒绝。
+    #[tokio::test]
+    async fn maa任务增删改查与穿越防护() {
+        let (state, wd, _store, _tmp) = content_test_state();
+        let app = router(state.clone());
+        let body = json!({"content": "[tasks]\n[\"Fight\"]\n"});
+        let res = app
+            .oneshot(
+                HttpRequest::put("/api/accounts/main/maa-tasks/weekly")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "put 任务应成功");
+        assert!(wd.maa_task_path("main", "weekly").unwrap().is_file());
+
+        // 非法 TOML → 400
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::put("/api/accounts/main/maa-tasks/bad")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"content": "[oops"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+        // 路径穿越名 → 400
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::get("/api/accounts/main/maa-tasks/..%2F..%2Fconf")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "穿越名应 400");
+
+        // list
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::get("/api/accounts/main/maa-tasks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["tasks"][0]["name"], "weekly");
+
+        // delete（缺 confirm 拒绝；带 confirm 成功）
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::delete("/api/accounts/main/maa-tasks/weekly")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "缺 confirm 应拒绝");
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::delete("/api/accounts/main/maa-tasks/weekly?confirm=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(!wd.maa_task_path("main", "weekly").unwrap().exists());
     }
 
     /// 不存在的账号/设备：报错应列出当前已注册项，便于用户自查拼写。

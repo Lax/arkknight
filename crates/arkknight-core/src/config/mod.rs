@@ -365,6 +365,27 @@ impl Workdir {
     pub fn account_file(&self, key: &str) -> PathBuf {
         self.account_dir(key).join("account.toml")
     }
+    /// mower 基建排班计划（bundle 内，会话容器/进程直读直写）。
+    pub fn mower_plan_path(&self, key: &str) -> PathBuf {
+        self.account_dir(key).join("mower").join("plan.json")
+    }
+    /// maa 自定义任务目录（窗口 executor=maa 时的 task 名即此处文件名）。
+    pub fn maa_tasks_dir(&self, key: &str) -> PathBuf {
+        self.account_dir(key).join("maa").join("tasks")
+    }
+    /// maa 任务名 → 文件路径（防路径穿越：仅字母/数字/`-`/`_`）。
+    pub fn maa_task_path(&self, key: &str, name: &str) -> Result<PathBuf> {
+        let ok = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !ok {
+            return Err(CoreError::Config(format!(
+                "任务名 {name:?} 不合法：仅字母/数字/`-`/`_`"
+            )));
+        }
+        Ok(self.maa_tasks_dir(key).join(format!("{name}.toml")))
+    }
     pub fn device_file(&self, name: &str) -> PathBuf {
         self.devices_dir().join(format!("{name}.toml"))
     }

@@ -56,6 +56,8 @@ export interface AccountInfo {
   enabled: boolean
   priority: number
   slice: string | null
+  /** mower 会话运行形态：process（默认）| docker */
+  runner: string
   windows: { start: string; end: string; executor: string; task: string | null }[]
   provisioned_on: string[]
 }
@@ -128,6 +130,7 @@ export const api = {
     priority?: number
     windows?: unknown[]
   }) => req('POST', '/api/accounts', body),
+  account: (key: string) => req('GET', `/api/accounts/${key}`) as Promise<AccountInfo>,
   patchAccount: (
     key: string,
     body: {
@@ -136,8 +139,42 @@ export const api = {
       account_name?: string
       display_name?: string
       uid?: string
+      server?: string
+      /** 整体替换；[] = 清空（退出自动调度） */
+      windows?: { start: string; end: string; executor: string; task?: string | null }[]
+      /** undefined=不变；null/''=回全局默认；'90m' 等=覆盖 */
+      slice?: string | null
+      runner?: string
     },
   ) => req('PATCH', `/api/accounts/${key}`, body),
+  getPlan: (key: string) =>
+    req('GET', `/api/accounts/${key}/plan`) as Promise<{
+      exists: boolean
+      content: string | null
+      path: string
+    }>,
+  putPlan: (key: string, content: string) =>
+    req('PUT', `/api/accounts/${key}/plan`, { content }) as Promise<{ ok: boolean; path: string }>,
+  maaTasks: (key: string) =>
+    req('GET', `/api/accounts/${key}/maa-tasks`) as Promise<{
+      tasks: { name: string; size: number }[]
+      dir: string
+    }>,
+  maaTask: (key: string, name: string) =>
+    req('GET', `/api/accounts/${key}/maa-tasks/${encodeURIComponent(name)}`) as Promise<{
+      name: string
+      content: string
+      path: string
+    }>,
+  putMaaTask: (key: string, name: string, content: string) =>
+    req('PUT', `/api/accounts/${key}/maa-tasks/${encodeURIComponent(name)}`, {
+      content,
+    }) as Promise<{ ok: boolean; path: string }>,
+  deleteMaaTask: (key: string, name: string) =>
+    req(
+      'DELETE',
+      `/api/accounts/${key}/maa-tasks/${encodeURIComponent(name)}?confirm=1`,
+    ) as Promise<{ ok: boolean }>,
   deleteAccount: (key: string) => req('DELETE', `/api/accounts/${key}?confirm=1`),
   devices: () => req('GET', '/api/devices') as Promise<DeviceInfo[]>,
   testDevice: (name: string) => req('POST', `/api/devices/${name}/test`),

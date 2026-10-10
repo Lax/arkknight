@@ -11,6 +11,7 @@ name = "arkknight"
 path = "src/main.rs"
 
 [dependencies]
+toml.workspace = true
 arkknight-core.workspace = true
 anyhow.workspace = true
 axum.workspace = true
@@ -27,6 +28,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 # Router 单测用 oneshot 驱动（仅测试期依赖，不进发布二进制）
 tower = { version = "0.5", features = ["util"] }
 

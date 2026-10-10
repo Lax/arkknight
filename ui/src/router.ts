@@ -8,6 +8,11 @@ const router = createRouter({
     { path: '/sessions', name: 'sessions', component: () => import('./views/SessionsView.vue') },
     { path: '/logs', name: 'logs', component: () => import('./views/LogsView.vue') },
     { path: '/accounts', name: 'accounts', component: () => import('./views/AccountsView.vue') },
+    {
+      path: '/accounts/:key',
+      name: 'account-detail',
+      component: () => import('./views/AccountDetailView.vue'),
+    },
     { path: '/devices', name: 'devices', component: () => import('./views/DevicesView.vue') },
     { path: '/schedule', name: 'schedule', component: () => import('./views/ScheduleView.vue') },
     { path: '/doctor', name: 'doctor', component: () => import('./views/DoctorView.vue') },
