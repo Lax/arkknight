@@ -710,12 +710,14 @@ mod tests {
 
     #[test]
     fn local_event_validation() {
-        let mut cfg = AkopsConfig::default();
-        cfg.local_events = vec![LocalEvent {
-            name: "网络闪断".into(),
-            start: "18:00".into(),
-            end: "18:05".into(),
-        }];
+        let mut cfg = AkopsConfig {
+            local_events: vec![LocalEvent {
+                name: "网络闪断".into(),
+                start: "18:00".into(),
+                end: "18:05".into(),
+            }],
+            ..AkopsConfig::default()
+        };
         cfg.validate().unwrap();
         // 非法 HH:MM
         cfg.local_events[0].start = "18:0".into();

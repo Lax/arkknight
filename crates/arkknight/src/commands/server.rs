@@ -2092,9 +2092,12 @@ mod tests {
             )
             .await
             .unwrap();
-        let v: serde_json::Value =
-            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap())
-                .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(v["game_day_boundary"], "04:00");
         assert_eq!(v["local_events"][0]["start"], "18:00");
 
