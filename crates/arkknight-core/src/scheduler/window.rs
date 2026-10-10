@@ -1,20 +1,20 @@
 //! 游戏日界与时间窗纯函数（§10.3）。
 //!
-//! 游戏日界 = `game_day_boundary`（官服 UTC-4 的 04:00 本地表示）；时间窗
-//! `HH:MM-HH:MM` 在**时钟日**内表达且不跨午夜（§10 M1 实现备注）。全部为纯函数，
+//! 游戏日界 = `game_day_boundary`（官服 UTC-4 的 04:00 本地表示），用于游戏日
+//! 归属记账（daily_guarantee、统计）与时间轴展示。时间窗按**本地时钟**表达：
+//! `end < start` 即跨过自然午夜（如 `22:00-02:00`），无需拆段。全部为纯函数，
 //! 配 mock 时刻测试。
 
 use chrono::{Datelike, Duration, Local, NaiveTime, Timelike};
 
 use crate::model::{ScheduledExecutor, TimeWindow};
 
-/// `HH:MM` → 当日分钟数。`24:00`（午夜端点）→ 1440：跨午夜时段以
-/// 多段表达（如 22:00-24:00 + 00:00-02:00），此端点是其中前段的自然结尾。
+/// `HH:MM` → 当日分钟数（00:00-23:59；午夜端点写作 00:00，配合 end < start 跨午夜）。
 pub fn hhmm_to_minutes(s: &str) -> Option<u32> {
     let (h, m) = s.split_once(':')?;
     let h: u32 = h.parse().ok()?;
     let m: u32 = m.parse().ok()?;
-    if m > 59 || h > 24 || (h == 24 && m != 0) {
+    if h > 23 || m > 59 {
         return None;
     }
     Some(h * 60 + m)
@@ -38,7 +38,8 @@ pub fn game_day_start(
     }
 }
 
-/// 当前时刻命中的窗口（账号的每日窗口表；时钟日内 [start, end)）。
+/// 当前时刻命中的窗口（账号的每日窗口表；本地时钟 [start, end)，
+/// `end < start` 表示跨过午夜：命中 `now >= s 或 now < e`）。
 /// 返回 (窗口引用, 执行器, 任务名)。
 pub fn active_window(
     now: chrono::DateTime<Local>,
@@ -47,26 +48,39 @@ pub fn active_window(
     let now_min = now.time().num_minutes_from_midnight();
     windows.iter().find_map(|w| {
         let (s, e) = (hhmm_to_minutes(&w.start)?, hhmm_to_minutes(&w.end)?);
-        if s < e && now_min >= s && now_min < e {
-            Some((w, w.executor, w.task.as_deref()))
+        let hit = if s < e {
+            now_min >= s && now_min < e
+        } else if s > e {
+            now_min >= s || now_min < e
         } else {
-            None
-        }
+            false // start == end：校验拒绝；此处兜底不命中
+        };
+        hit.then_some((w, w.executor, w.task.as_deref()))
     })
 }
 
-/// 距离窗口开始还有多久（未开始时 Some(duration)；已开始/已结束 None）。
+/// 距离窗口下一次开始还有多久。今天已开过（含正在开）→ 明天同一 clock 时刻。
 pub fn until_window_start(now: chrono::DateTime<Local>, w: &TimeWindow) -> Option<Duration> {
-    let (s, _) = (hhmm_to_minutes(&w.start)?, hhmm_to_minutes(&w.end)?);
+    let s = hhmm_to_minutes(&w.start)?;
     let start_today = now
         .date_naive()
         .and_hms_opt(s / 60, s % 60, 0)?
         .and_local_timezone(Local)
         .single()?;
-    if now < start_today {
+    let in_window = active_window(now, std::slice::from_ref(w)).is_some();
+    if in_window {
+        // 正在进行的这次开始于「今天或昨天的 clock s」（跨自然天窗口的尾段在凌晨），
+        // 下一次开始 = 那个时刻 + 1 天
+        let ongoing = if start_today <= now {
+            start_today
+        } else {
+            start_today - Duration::days(1)
+        };
+        Some(ongoing + Duration::days(1) - now)
+    } else if now < start_today {
         Some(start_today - now)
     } else {
-        None
+        Some(start_today + Duration::days(1) - now)
     }
 }
 
@@ -113,26 +127,9 @@ mod tests {
     fn hhmm_parse() {
         assert_eq!(hhmm_to_minutes("04:00"), Some(240));
         assert_eq!(hhmm_to_minutes("23:59"), Some(1439));
-        assert_eq!(hhmm_to_minutes("24:00"), Some(1440), "午夜端点合法");
-        assert_eq!(hhmm_to_minutes("24:30"), None, "24 只允许整点");
+        assert_eq!(hhmm_to_minutes("24:00"), None, "午夜端点写作 00:00");
         // 解析层宽松（单位数字可过）；严格 HH:MM 由模型校验层拒绝
         assert_eq!(hhmm_to_minutes("4:00"), Some(240));
-    }
-
-    #[test]
-    fn window_may_end_at_midnight() {
-        // 22:00-24:00 合法且 [start,end) 语义成立：23:59 命中、午夜后不命中
-        let windows = [window("22:00", "24:00", ScheduledExecutor::Mower)];
-        assert!(active_window(at(2026, 10, 9, 23, 59), &windows).is_some());
-        assert!(active_window(at(2026, 10, 9, 21, 59), &windows).is_none());
-        // 跨午夜时段 = 两段：22:00-24:00 + 00:00-02:00
-        let split = [
-            window("22:00", "24:00", ScheduledExecutor::Mower),
-            window("00:00", "02:00", ScheduledExecutor::Mower),
-        ];
-        assert!(active_window(at(2026, 10, 9, 23, 30), &split).is_some());
-        assert!(active_window(at(2026, 10, 10, 1, 0), &split).is_some());
-        assert!(active_window(at(2026, 10, 10, 2, 1), &split).is_none());
     }
 
     #[test]
@@ -170,10 +167,18 @@ mod tests {
     }
 
     #[test]
-    fn wrap_window_never_matches() {
-        // 跨午夜窗口在配置校验即拒绝；此处兜底：s>=e 不命中
-        let windows = [window("23:00", "02:00", ScheduledExecutor::Mower)];
-        assert!(active_window(at(2026, 10, 9, 23, 30), &windows).is_none());
+    fn cross_midnight_window_matches() {
+        // 跨自然天窗口 22:00-02:00：end < start 即跨过午夜，凌晨尾段照常命中
+        let windows = [window("22:00", "02:00", ScheduledExecutor::Mower)];
+        assert!(active_window(at(2026, 10, 9, 22, 0), &windows).is_some());
+        assert!(active_window(at(2026, 10, 9, 23, 30), &windows).is_some());
+        assert!(active_window(at(2026, 10, 10, 1, 59), &windows).is_some());
+        assert!(active_window(at(2026, 10, 10, 2, 0), &windows).is_none());
+        assert!(active_window(at(2026, 10, 9, 21, 59), &windows).is_none());
+        // 全天窗口 00:00-23:59 依旧全天（00:00 起点含午夜）
+        let allday = [window("00:00", "23:59", ScheduledExecutor::Mower)];
+        assert!(active_window(at(2026, 10, 9, 3, 0), &allday).is_some());
+        assert!(active_window(at(2026, 10, 9, 12, 0), &allday).is_some());
     }
 
     #[test]
@@ -183,6 +188,30 @@ mod tests {
             until_window_start(at(2026, 10, 9, 7, 0), &w),
             Some(Duration::hours(1))
         );
-        assert_eq!(until_window_start(at(2026, 10, 9, 8, 0), &w), None);
+        // 窗口进行中 → 下一次开始是明天
+        assert_eq!(
+            until_window_start(at(2026, 10, 9, 9, 0), &w),
+            Some(Duration::hours(23))
+        );
+        // 今天已结束 → 明天
+        assert_eq!(
+            until_window_start(at(2026, 10, 9, 13, 0), &w),
+            Some(Duration::hours(19))
+        );
+    }
+
+    #[test]
+    fn until_start_cross_midnight() {
+        let w = window("22:00", "02:00", ScheduledExecutor::Mower);
+        // 凌晨 01:00 正在窗口内（本次开始于昨晚）→ 明晚 22:00
+        assert_eq!(
+            until_window_start(at(2026, 10, 10, 1, 0), &w),
+            Some(Duration::hours(21))
+        );
+        // 下午 → 今晚 22:00
+        assert_eq!(
+            until_window_start(at(2026, 10, 9, 15, 0), &w),
+            Some(Duration::hours(7))
+        );
     }
 }

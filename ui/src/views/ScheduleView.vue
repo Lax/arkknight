@@ -79,15 +79,15 @@ onMounted(load)
         <n-text depth="3" style="font-size: 12px">
           每日本地定时事项（如「每晚 18:00 网络闪断五分钟」「路由器 03:30 定时重启」）：
           会标注在各账号时间轴上供选窗避让。**同一事项可有多个时段**——加一项会自动
-          带上上一条的名称，逐段填写即可。end 支持 24:00；跨午夜的时段请拆成两条
-          （如 23:50-24:00 + 00:00-00:10）。当前版本仅作标注提示，调度器不强制避让——
-          短时闪断内 mower 的 adb 会自动重连，通常无需处理。
+          带上上一条的名称，逐段填写即可；end 小于 start 即跨过自然午夜（如
+          23:50-00:10）。当前版本仅作标注提示，调度器不强制避让——短时闪断内
+          mower 的 adb 会自动重连，通常无需处理。
         </n-text>
         <div v-for="(e, i) in events" :key="i" class="event-row">
           <n-input v-model:value="e.name" placeholder="名称，如 网络闪断" style="flex: 1; min-width: 140px" />
           <n-input v-model:value="e.start" placeholder="18:00" style="width: 90px" />
           <span style="color: gray">–</span>
-          <n-input v-model:value="e.end" placeholder="18:05（可 24:00）" style="width: 110px" />
+          <n-input v-model:value="e.end" placeholder="00:10（&lt;start=跨天）" style="width: 120px" />
           <n-button size="tiny" type="error" @click="events.splice(i, 1)">删</n-button>
         </div>
         <n-empty v-if="!events.length" description="暂无本地事项" size="small" />

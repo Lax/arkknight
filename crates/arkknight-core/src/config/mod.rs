@@ -226,15 +226,16 @@ pub struct LocalEvent {
 }
 
 impl LocalEvent {
+    /// 与时间窗同规则：`end < start` 表示跨过自然午夜（如 23:50-00:10）。
     pub fn validate(&self) -> Result<()> {
         if self.name.trim().is_empty() {
             return Err(CoreError::Config("本地事项 name 不能为空".into()));
         }
         crate::model::account::validate_hhmm(&self.start, "本地事项 start")?;
-        crate::model::account::validate_hhmm_opt(&self.end, "本地事项 end", true)?;
-        if self.start >= self.end {
+        crate::model::account::validate_hhmm(&self.end, "本地事项 end")?;
+        if self.start == self.end {
             return Err(CoreError::Config(format!(
-                "本地事项 {} {}-{} 不合法：须 start < end。跨午夜时段拆多段表达，                 同一名称可录多条",
+                "本地事项 {} {}-{} 不合法：start 与 end 相同",
                 self.name, self.start, self.end
             )));
         }
@@ -722,18 +723,13 @@ mod tests {
         // 非法 HH:MM
         cfg.local_events[0].start = "18:0".into();
         assert!(cfg.validate().is_err());
-        // start >= end
-        cfg.local_events[0].start = "18:05".into();
+        // start == end（零长度）拒绝
+        cfg.local_events[0].start = "18:00".into();
         cfg.local_events[0].end = "18:00".into();
         assert!(cfg.validate().is_err());
-        // 跨午夜不支持（明确报错：拆多段表达）
-        cfg.local_events[0].start = "23:00".into();
-        cfg.local_events[0].end = "01:00".into();
-        let msg = cfg.validate().unwrap_err().to_string();
-        assert!(msg.contains("拆多段表达"), "{msg}");
-        // end 可为 24:00 午夜端点（多段的前段）
+        // 跨自然天合法（end < start = 跨过午夜）
         cfg.local_events[0].start = "23:50".into();
-        cfg.local_events[0].end = "24:00".into();
+        cfg.local_events[0].end = "00:10".into();
         cfg.validate().unwrap();
     }
 

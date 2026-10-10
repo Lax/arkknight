@@ -77,13 +77,14 @@ pub struct TimeWindow {
 }
 
 impl TimeWindow {
-    /// 校验窗口语义：start < end（时钟日内；跨午夜时段拆多段表达）。
+    /// 校验窗口语义：`start == end` 不合法（零长度）；`end < start` 表示
+    /// 跨过自然午夜（如 22:00-02:00），合法。
     pub fn validate(&self) -> Result<()> {
         crate::model::account::validate_hhmm(&self.start, "时间窗 start")?;
-        crate::model::account::validate_hhmm_opt(&self.end, "时间窗 end", true)?;
-        if self.start >= self.end {
+        crate::model::account::validate_hhmm(&self.end, "时间窗 end")?;
+        if self.start == self.end {
             return Err(CoreError::Config(format!(
-                "时间窗 {}-{} 不合法：须 start < end。跨午夜时段请拆成两段表达，                 如 22:00-24:00 + 00:00-02:00",
+                "时间窗 {}-{} 不合法：start 与 end 相同。跨过午夜直接写（如 22:00-02:00）",
                 self.start, self.end
             )));
         }
@@ -209,11 +210,6 @@ pub fn validate_slug(name: &str, what: &str) -> Result<()> {
 
 /// 校验严格 `HH:MM`（两位小时 + 冒号 + 两位分钟，24 小时制）。
 pub(crate) fn validate_hhmm(s: &str, what: &str) -> Result<()> {
-    validate_hhmm_opt(s, what, false)
-}
-
-/// `allow_midnight` 时 end 可为 `24:00`（午夜端点；跨午夜时段拆多段表达）。
-pub(crate) fn validate_hhmm_opt(s: &str, what: &str, allow_midnight: bool) -> Result<()> {
     let bad = || CoreError::Config(format!("{what} `{s}` 不合法：须为严格 `HH:MM` 24 小时制"));
     let b = s.as_bytes();
     if b.len() != 5 || b[2] != b':' {
@@ -221,12 +217,11 @@ pub(crate) fn validate_hhmm_opt(s: &str, what: &str, allow_midnight: bool) -> Re
     }
     let h: u32 = s[0..2].parse().map_err(|_| bad())?;
     let m: u32 = s[3..5].parse().map_err(|_| bad())?;
-    let ok = if allow_midnight {
-        (h <= 23 && m <= 59) || (h == 24 && m == 0)
+    if h <= 23 && m <= 59 {
+        Ok(())
     } else {
-        h <= 23 && m <= 59
-    };
-    if ok { Ok(()) } else { Err(bad()) }
+        Err(bad())
+    }
 }
 
 #[cfg(test)]
@@ -301,9 +296,9 @@ account_name = "昵称"
         assert!(validate_slug("-x", "x").is_err());
         assert!(validate_hhmm("04:00", "x").is_ok());
         assert!(validate_hhmm("4:00", "x").is_err());
-        assert!(validate_hhmm("24:00", "x").is_err());
-        // end 端点允许 24:00（午夜）
-        assert!(validate_hhmm_opt("24:00", "x", true).is_ok());
-        assert!(validate_hhmm_opt("24:30", "x", true).is_err());
+        assert!(
+            validate_hhmm("24:00", "x").is_err(),
+            "24:00 不是合法时钟时刻"
+        );
     }
 }

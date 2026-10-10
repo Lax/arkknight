@@ -1,7 +1,10 @@
 <script setup lang="ts">
 // 24 小时时间轴：拖拽画时间窗 / 拖边调整 / 整块平移 / 删除；
-// 叠加显示游戏日界（默认 04:00，账号调度语义的日期归属线）与本地定时事项
-// （如每晚网络闪断），供选窗时直观避让。分钟网格 5min，最短窗口 15min。
+// 叠加显示游戏日界（默认 04:00，账号调度语义的日期归属参考线）与本地定时事项
+// （如每晚网络闪断），供选窗时直观避让。
+// 时间窗按本地时钟表达：end < start 即跨过自然午夜（如 22:00-02:00），
+// 时间轴渲染为两段（晚间段 + 凌晨段），外沿可拖拽调整。
+// 分钟网格 5min，最短窗口 15min。
 import { computed, ref } from 'vue'
 
 export interface TlWindow {
@@ -40,11 +43,13 @@ function m2hm(m: number): string {
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
 }
 function snap(m: number): number {
-  return Math.round(m / SNAP) * SNAP
+  return Math.max(0, Math.min(DAY, Math.round(m / SNAP) * SNAP))
 }
 function pct(m: number): string {
   return `${(m / DAY) * 100}%`
 }
+const isWrap = (s: number, e: number): boolean => s > e
+const lenOf = (s: number, e: number): number => (s <= e ? e - s : DAY - s + e)
 
 const track = ref<HTMLElement | null>(null)
 const hours = Array.from({ length: 13 }, (_, i) => i * 2) // 0,2,...,24
@@ -53,14 +58,17 @@ const boundaryMin = computed(() => (props.boundary ? hm2m(props.boundary) : 240)
 const eventsMin = computed(() =>
   (props.events ?? []).map((e) => ({ name: e.name, a: hm2m(e.start), b: hm2m(e.end) })),
 )
-const winMin = computed(() =>
-  props.windows.map((w) => ({ ...w, a: hm2m(w.start), b: hm2m(w.end) })),
-)
 
-// 拖拽态：draft=画新窗；move/resize 作用于 winMin[i]，视觉用 dragShift 偏移
+// 拖拽态：draft=画新窗（仅同日段）；其余模式持有该窗口的实时候选 s/e（分钟）
 type Drag =
   | { mode: 'draft'; a: number; b: number }
-  | { mode: 'move' | 'resize-l' | 'resize-r'; index: number; origA: number; origB: number; grabMin: number }
+  | {
+      mode: 'move' | 'resize-l' | 'resize-r'
+      index: number
+      s: number
+      e: number
+      grabMin: number
+    }
 
 const drag = ref<Drag | null>(null)
 
@@ -70,48 +78,69 @@ function posToMin(e: PointerEvent): number {
   return snap((x / rect.width) * DAY)
 }
 
+function winStartEnd(i: number): { s: number; e: number } {
+  const d = drag.value
+  if (d && d.mode !== 'draft' && d.index === i) return { s: d.s, e: d.e }
+  const w = props.windows[i]
+  return { s: hm2m(w.start), e: hm2m(w.end) }
+}
+
+// 窗口 → 可视段（跨午夜窗口拆 [s,24:00) + [00:00,e) 两段）
+function segmentsOf(i: number): { a: number; b: number }[] {
+  const { s, e } = winStartEnd(i)
+  if (s < e) return [{ a: s, b: e }]
+  if (s > e) return [{ a: s, b: DAY }, { a: 0, b: e }]
+  return []
+}
+
 function onTrackDown(e: PointerEvent): void {
   if (props.readonly || drag.value) return
   const target = e.target as HTMLElement
-  if (target.closest('.tl-block') || target.closest('.tl-handle')) return // 块交互另行处理
+  if (target.closest('.tl-block') || target.closest('.tl-handle')) return
   const m = posToMin(e)
   drag.value = { mode: 'draft', a: m, b: m }
   track.value!.setPointerCapture(e.pointerId)
 }
 
-function onBlockDown(e: PointerEvent, index: number, mode: 'move' | 'resize-l' | 'resize-r'): void {
+function onBlockDown(
+  ev: PointerEvent,
+  index: number,
+  mode: 'move' | 'resize-l' | 'resize-r',
+): void {
   if (props.readonly || drag.value) return
-  e.stopPropagation()
-  const w = winMin.value[index]
-  drag.value = {
-    mode,
-    index,
-    origA: w.a,
-    origB: w.b,
-    grabMin: posToMin(e),
-  }
-  track.value!.setPointerCapture(e.pointerId)
+  ev.stopPropagation()
+  const { s, e } = winStartEnd(index)
+  drag.value = { mode, index, s, e, grabMin: posToMin(ev) }
+  track.value!.setPointerCapture(ev.pointerId)
 }
 
-function onPointerMove(e: PointerEvent): void {
+function onPointerMove(ev: PointerEvent): void {
   const d = drag.value
   if (!d) return
-  const m = posToMin(e)
+  const m = posToMin(ev)
   if (d.mode === 'draft') {
     drag.value = { mode: 'draft', a: d.a, b: m }
-  } else if (d.mode === 'resize-l') {
-    d.origA = Math.max(0, Math.min(d.origB - MIN_LEN, m))
-  } else if (d.mode === 'resize-r') {
-    d.origB = Math.min(DAY, Math.max(d.origA + MIN_LEN, m))
-  } else {
-    // 整块平移：保时长，钳制在 0-24h
-    const delta = m - d.grabMin
-    const len = d.origB - d.origA
-    let na = d.origA + delta
-    na = Math.max(0, Math.min(DAY - len, na))
-    d.origA = na
-    d.origB = na + len
+    return
   }
+  if (d.mode === 'move') {
+    // 平移：保时长。普通窗钳制在日内；跨午夜窗沿钟面环形移动
+    const span = lenOf(d.s, d.e)
+    const delta = m - d.grabMin
+    if (isWrap(d.s, d.e)) {
+      const ns = (((d.s + delta) % DAY) + DAY) % DAY
+      drag.value = { ...d, s: ns, e: (ns + span) % DAY }
+    } else {
+      const ns = Math.max(0, Math.min(DAY - span, d.s + delta))
+      drag.value = { ...d, s: ns, e: ns + span }
+    }
+    return
+  }
+  // 调边：候选 (s,e) 时长须 ≥ MIN_LEN；拖过对侧自动在普通/跨午夜形态间切换
+  const moved = snap(m)
+  const s = d.mode === 'resize-l' ? moved : d.s
+  const e = d.mode === 'resize-r' ? moved : d.e
+  if (lenOf(s, e) < MIN_LEN) return // 候选太短：忽略该次移动
+  drag.value = { ...d, s, e }
 }
 
 function onPointerUp(): void {
@@ -128,20 +157,11 @@ function onPointerUp(): void {
     }
   } else {
     const next = props.windows.map((w, i) =>
-      i === d.index
-        ? { ...w, start: m2hm(d.origA), end: m2hm(d.origB) }
-        : w,
+      i === d.index ? { ...w, start: m2hm(d.s), end: m2hm(d.e) } : w,
     )
     emit('update:windows', next)
   }
   drag.value = null
-}
-
-// 块的最终显示位置（拖拽中的窗口用拖拽态坐标，未拖拽用 props）
-function displayRange(i: number): { a: number; b: number } {
-  const d = drag.value
-  if (d && d.mode !== 'draft' && d.index === i) return { a: d.origA, b: d.origB }
-  return { a: winMin.value[i].a, b: winMin.value[i].b }
 }
 
 function removeAt(i: number): void {
@@ -154,6 +174,40 @@ function removeAt(i: number): void {
 function executorColor(executor: string): string {
   return executor === 'maa' ? '#2080f0' : '#18a058'
 }
+
+// 渲染块：窗口 × 可视段；句柄挂逻辑边——
+// 普通窗两段边都在本段；跨午夜窗段0（晚间）挂 start、段1（凌晨）挂 end
+interface RenderBlock {
+  key: string
+  winIndex: number
+  a: number
+  b: number
+  color: string
+  label: string
+  primary: boolean
+  handle: 'l' | 'r' | 'both'
+  wrapped: boolean
+}
+const blocks = computed<RenderBlock[]>(() =>
+  props.windows.flatMap((w, i) => {
+    const { s, e } = winStartEnd(i)
+    const wrapped = isWrap(s, e)
+    const label = `${m2hm(s)}-${m2hm(e)}`
+    const color = executorColor(w.executor)
+    const segs = segmentsOf(i)
+    return segs.map((seg, si) => ({
+      key: `${i}-${si}-${seg.a}-${seg.b}`,
+      winIndex: i,
+      a: seg.a,
+      b: seg.b,
+      color,
+      label,
+      primary: si === 0,
+      handle: wrapped ? (si === 0 ? ('l' as const) : ('r' as const)) : ('both' as const),
+      wrapped,
+    }))
+  }),
+)
 </script>
 
 <template>
@@ -185,39 +239,48 @@ function executorColor(executor: string): string {
         <div class="tl-boundary-label">游戏日界 {{ boundary }}</div>
       </div>
 
-      <!-- 本地定时事项（只读红纹） -->
-      <div
-        v-for="(ev, i) in eventsMin"
-        :key="`ev${i}`"
-        class="tl-event"
-        :style="{ left: pct(ev.a), width: pct(Math.max(ev.b - ev.a, 4)) }"
-        :title="`${ev.name} ${m2hm(ev.a)}-${m2hm(ev.b)}`"
-      >
-        <span class="tl-event-label">{{ ev.name }}</span>
-      </div>
+      <!-- 本地定时事项（只读橙纹；跨午夜事项拆两段） -->
+      <template v-for="(ev, i) in eventsMin" :key="`ev${i}`">
+        <div
+          v-for="(seg, si) in ev.a < ev.b
+            ? [{ a: ev.a, b: ev.b }]
+            : [{ a: ev.a, b: DAY }, { a: 0, b: ev.b }]"
+          :key="`${si}`"
+          class="tl-event"
+          :style="{ left: pct(seg.a), width: pct(Math.max(seg.b - seg.a, 4)) }"
+          :title="`${ev.name} ${m2hm(ev.a)}-${m2hm(ev.b)}`"
+        >
+          <span v-if="seg.b - seg.a > 40" class="tl-event-label">{{ ev.name }}</span>
+        </div>
+      </template>
 
-      <!-- 时间窗块 -->
+      <!-- 时间窗块（跨午夜窗口渲染为两段，拖外沿调整） -->
       <div
-        v-for="(w, i) in winMin"
-        :key="`w${i}`"
+        v-for="blk in blocks"
+        :key="blk.key"
         class="tl-block"
-        :style="(() => {
-          const r = displayRange(i)
-          return { left: pct(r.a), width: pct(Math.max(r.b - r.a, 8)), background: executorColor(w.executor) }
-        })()"
-        :title="`${w.start}-${w.end} ${w.executor}${w.task ? ':' + w.task : ''}（拖动平移，拖边调整）`"
-        @pointerdown="onBlockDown($event, i, 'move')"
+        :style="{ left: pct(blk.a), width: pct(Math.max(blk.b - blk.a, 8)), background: blk.color }"
+        :title="`${blk.label}（拖动平移，拖边调整）`"
+        @pointerdown="onBlockDown($event, blk.winIndex, 'move')"
       >
-        <span class="tl-block-label">{{ w.start }}-{{ w.end }}</span>
+        <span class="tl-block-label">{{ blk.label }}</span>
         <span
-          v-if="!readonly"
+          v-if="!readonly && blk.primary"
           class="tl-block-del"
           title="删除此时间窗"
           @pointerdown.stop
-          @click.stop="removeAt(i)"
+          @click.stop="removeAt(blk.winIndex)"
         >×</span>
-        <span class="tl-handle tl-handle-l" @pointerdown="onBlockDown($event, i, 'resize-l')" />
-        <span class="tl-handle tl-handle-r" @pointerdown="onBlockDown($event, i, 'resize-r')" />
+        <span
+          v-if="!readonly && (blk.handle === 'l' || blk.handle === 'both')"
+          class="tl-handle tl-handle-l"
+          @pointerdown="onBlockDown($event, blk.winIndex, 'resize-l')"
+        />
+        <span
+          v-if="!readonly && (blk.handle === 'r' || blk.handle === 'both')"
+          class="tl-handle tl-handle-r"
+          @pointerdown="onBlockDown($event, blk.winIndex, 'resize-r')"
+        />
       </div>
 
       <!-- 拖拽中的新窗草稿 -->
@@ -230,8 +293,9 @@ function executorColor(executor: string): string {
       </div>
     </div>
     <div class="tl-hint">
-      在空白处拖拽画新窗（{{ Math.floor(MIN_LEN / 60) ? `${MIN_LEN / 60}h` : `${MIN_LEN}m` }} 起，5min 吸附）；
-      拖动块平移、拖左右边调整；点 × 删除。改动保存前不落盘。
+      在空白处拖拽画新窗（{{ MIN_LEN }}min 起，5min 吸附）；拖动块平移、拖左右边调整；
+      点 × 删除。跨自然天的时段（如 22:00-02:00）在下方明细行把 end 改得小于 start 即可，
+      时间轴会拆成两段显示。改动保存前不落盘。
     </div>
   </div>
 </template>

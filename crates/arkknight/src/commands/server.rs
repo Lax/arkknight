@@ -1878,6 +1878,21 @@ mod tests {
         let acc = wd.load_account("main").unwrap();
         assert_eq!(acc.schedule.windows.len(), 1);
         assert_eq!(acc.schedule.windows[0].start, "08:00");
+        // 跨自然天窗口（end < start）合法
+        let body = json!({"windows": [{"start": "22:00", "end": "02:00", "executor": "mower"}]});
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::patch("/api/accounts/main")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "跨午夜窗口应合法");
+        let acc = wd.load_account("main").unwrap();
+        assert_eq!(acc.schedule.windows[0].start, "22:00");
+        assert_eq!(acc.schedule.windows[0].end, "02:00");
         assert_eq!(
             acc.schedule.slice.as_ref().map(|d| d.0.as_secs()),
             Some(5400)
@@ -2101,8 +2116,21 @@ mod tests {
         assert_eq!(v["game_day_boundary"], "04:00");
         assert_eq!(v["local_events"][0]["start"], "18:00");
 
-        // 非法：start >= end
-        let bad = json!([{"name": "x", "start": "19:00", "end": "18:00"}]);
+        // 合法：end < start = 跨过午夜
+        let wrap = json!([{"name": "夜巡", "start": "23:50", "end": "00:10"}]);
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::put("/api/local-events")
+                    .header("content-type", "application/json")
+                    .body(Body::from(wrap.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "跨午夜事项应合法");
+
+        // 非法：start == end（零长度）
+        let bad = json!([{"name": "x", "start": "19:00", "end": "19:00"}]);
         let res = router(state)
             .oneshot(
                 HttpRequest::put("/api/local-events")

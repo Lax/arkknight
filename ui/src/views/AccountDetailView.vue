@@ -66,11 +66,14 @@ function checkOverlaps(): void {
     const [h, mm] = s.split(':').map(Number)
     return h * 60 + mm
   }
+  // 区间相交（支持跨午夜：end < start 视为 [start,24:00) + [00:00,end) 两段）
+  const hit = (ws: number, we: number, a: number, b: number): boolean =>
+    ws < we ? a < we && ws < b : a < we || ws < b
   const out: string[] = []
   for (const w of sched.value.windows) {
     if (!w.start || !w.end) continue
     for (const ev of localEvents.value) {
-      if (m(w.start) < m(ev.end) && m(ev.start) < m(w.end)) {
+      if (hit(m(w.start), m(w.end), m(ev.start), m(ev.end))) {
         out.push(`时间窗 ${w.start}-${w.end} 与本地事项「${ev.name}」（${ev.start}-${ev.end}）重叠`)
       }
     }
@@ -328,8 +331,8 @@ onMounted(load)
         </n-alert>
         <n-space align="center" style="margin: 8px 0 0">
           <n-text depth="3" style="font-size: 12px">
-            时间窗明细（与上方时间轴双向同步；本地时区，窗口须 start &lt; end，
-            end 可到 24:00；跨午夜时段请拆两段，如 22:00-24:00 + 00:00-02:00）
+            时间窗明细（与上方时间轴双向同步；本地时区。end 小于 start 即跨过自然午夜，
+            如 22:00-02:00；跨过游戏日界的窗口请避开，如 02:00-05:00）
           </n-text>
           <n-button size="tiny" @click="addWindow">+ 加一行</n-button>
         </n-space>
@@ -337,7 +340,7 @@ onMounted(load)
         <div v-for="(w, i) in sched.windows" :key="i" class="window-row">
           <n-input v-model:value="w.start" placeholder="08:00" style="width: 90px" />
           <span style="color: gray">–</span>
-          <n-input v-model:value="w.end" placeholder="12:00（可 24:00）" style="width: 110px" />
+          <n-input v-model:value="w.end" placeholder="02:00（&lt;start=跨天）" style="width: 120px" />
           <n-select v-model:value="w.executor" :options="executorOptions" style="width: 180px" />
           <n-input
             v-if="w.executor === 'maa'"
