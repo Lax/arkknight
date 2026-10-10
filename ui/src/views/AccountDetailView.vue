@@ -6,6 +6,7 @@ import {
   NSelect, NSpace, NTag, NText, NEmpty, useMessage,
 } from 'naive-ui'
 import { api, type AccountInfo } from '../api'
+import TimeLine24 from '../components/TimeLine24.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +15,8 @@ const key = String(route.params.key ?? '')
 
 const account = ref<AccountInfo | null>(null)
 const loading = ref(true)
+const gameDayBoundary = ref('04:00')
+const localEvents = ref<{ name: string; start: string; end: string }[]>([])
 
 // ---- 基本信息 ----
 const basic = ref({ display_name: '', server: 'official', account_name: '', uid: '' })
@@ -56,9 +59,31 @@ const taskContent = ref('')
 const taskDirty = ref(false)
 const savingTask = ref(false)
 
+/** 时间窗与本地定时事项的重叠提示（仅提示，调度器不强制避让） */
+const overlapWarnings = ref<string[]>([])
+function checkOverlaps(): void {
+  const m = (s: string): number => {
+    const [h, mm] = s.split(':').map(Number)
+    return h * 60 + mm
+  }
+  const out: string[] = []
+  for (const w of sched.value.windows) {
+    if (!w.start || !w.end) continue
+    for (const ev of localEvents.value) {
+      if (m(w.start) < m(ev.end) && m(ev.start) < m(w.end)) {
+        out.push(`时间窗 ${w.start}-${w.end} 与本地事项「${ev.name}」（${ev.start}-${ev.end}）重叠`)
+      }
+    }
+  }
+  overlapWarnings.value = out
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
+    const info = await api.schedulerInfo()
+    gameDayBoundary.value = info.game_day_boundary
+    localEvents.value = info.local_events
     const a = await api.account(key)
     account.value = a
     basic.value = {
@@ -86,6 +111,7 @@ async function load(): Promise<void> {
     const t = await api.maaTasks(key)
     tasks.value = t.tasks
     taskDir.value = t.dir
+    checkOverlaps()
   } catch (e) {
     message.error(`加载失败：${(e as Error).message}`)
   } finally {
@@ -138,6 +164,7 @@ async function saveSchedule(): Promise<void> {
         ? '调度配置已保存（下个调度周期生效）'
         : '已保存：时间窗为空，该账号不再参与自动调度（仅手动会话）',
     )
+    checkOverlaps()
     await load()
   } catch (e) {
     message.error((e as Error).message)
@@ -285,9 +312,23 @@ onMounted(load)
         </div>
 
         <n-divider style="margin: 10px 0" />
-        <n-space align="center" style="margin-bottom: 8px">
+        <TimeLine24
+          v-model:windows="sched.windows"
+          :boundary="gameDayBoundary"
+          :events="localEvents"
+        />
+        <n-alert
+          v-for="(w, i) in overlapWarnings"
+          :key="i"
+          type="warning"
+          :bordered="false"
+          style="margin-top: 6px; font-size: 12px"
+        >
+          {{ w }}——建议调整时间窗避开
+        </n-alert>
+        <n-space align="center" style="margin: 8px 0 0">
           <n-text depth="3" style="font-size: 12px">
-            每日时间窗（本地时区；到点切号执行对应任务，窗口须 start &lt; end）
+            时间窗明细（与上方时间轴双向同步；本地时区，窗口须 start &lt; end）
           </n-text>
           <n-button size="tiny" @click="addWindow">+ 加一行</n-button>
         </n-space>

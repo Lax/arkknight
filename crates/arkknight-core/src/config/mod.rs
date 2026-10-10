@@ -48,6 +48,8 @@ pub struct AkopsConfig {
     pub scheduler: SchedulerConfig,
     pub ports: PortsConfig,
     pub device_defaults: DeviceDefaults,
+    /// 本地定时事项（时间轴标注用，如「每晚 18:00 网络闪断五分钟」）
+    pub local_events: Vec<LocalEvent>,
 }
 
 impl Default for AkopsConfig {
@@ -59,6 +61,7 @@ impl Default for AkopsConfig {
             scheduler: SchedulerConfig::default(),
             ports: PortsConfig::default(),
             device_defaults: DeviceDefaults::default(),
+            local_events: Vec::new(),
         }
     }
 }
@@ -213,6 +216,32 @@ impl Default for PortsConfig {
     }
 }
 
+/// 本地定时事项（仅时间轴标注与选窗参考，调度器不强制避让；
+/// 例：每晚网络闪断、路由器定时重启）。start/end 本地 `HH:MM`，须 start < end。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalEvent {
+    pub name: String,
+    pub start: String,
+    pub end: String,
+}
+
+impl LocalEvent {
+    pub fn validate(&self) -> Result<()> {
+        if self.name.trim().is_empty() {
+            return Err(CoreError::Config("本地事项 name 不能为空".into()));
+        }
+        crate::model::account::validate_hhmm(&self.start, "本地事项 start")?;
+        crate::model::account::validate_hhmm(&self.end, "本地事项 end")?;
+        if self.start >= self.end {
+            return Err(CoreError::Config(format!(
+                "本地事项 {} {}-{} 不合法：须 start < end（不支持跨午夜）",
+                self.name, self.start, self.end
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// 扩容准入水位（M2）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -291,6 +320,9 @@ impl AkopsConfig {
                     "ports.{what} 端口段 [{a}, {b}] 不合法"
                 )));
             }
+        }
+        for ev in &self.local_events {
+            ev.validate()?;
         }
         if !matches!(self.server.bind.as_str(), "127.0.0.1" | "::1" | "localhost")
             && self.server.token.is_empty()
@@ -674,6 +706,29 @@ mod tests {
         assert_eq!(wd.load_all_devices().unwrap().len(), 1);
         assert!(wd.remove_device("d1").is_ok());
         assert!(wd.remove_device("d1").is_err());
+    }
+
+    #[test]
+    fn local_event_validation() {
+        let mut cfg = AkopsConfig::default();
+        cfg.local_events = vec![LocalEvent {
+            name: "网络闪断".into(),
+            start: "18:00".into(),
+            end: "18:05".into(),
+        }];
+        cfg.validate().unwrap();
+        // 非法 HH:MM
+        cfg.local_events[0].start = "18:0".into();
+        assert!(cfg.validate().is_err());
+        // start >= end
+        cfg.local_events[0].start = "18:05".into();
+        cfg.local_events[0].end = "18:00".into();
+        assert!(cfg.validate().is_err());
+        // 跨午夜不支持（明确报错）
+        cfg.local_events[0].start = "23:00".into();
+        cfg.local_events[0].end = "01:00".into();
+        let msg = cfg.validate().unwrap_err().to_string();
+        assert!(msg.contains("不支持跨午夜"), "{msg}");
     }
 
     #[test]

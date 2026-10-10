@@ -185,6 +185,17 @@ export const api = {
       + `?token=${encodeURIComponent(getToken())}`
       + (nonce ? `&t=${nonce}` : ''),
   doctor: () => req('GET', '/api/doctor'),
+  /** 调度展示参数：游戏日界 / 时区 / 默认时间片 / 本地定时事项 */
+  schedulerInfo: () =>
+    req('GET', '/api/local-events') as Promise<{
+      game_day_boundary: string
+      timezone: string
+      default_slice: string
+      local_events: { name: string; start: string; end: string }[]
+    }>,
+  /** 整体替换本地定时事项（时间轴标注用） */
+  putLocalEvents: (events: { name: string; start: string; end: string }[]) =>
+    req('PUT', '/api/local-events', events) as Promise<{ ok: boolean }>,
   pause: () => req('POST', '/api/schedule/pause'),
   resume: () => req('POST', '/api/schedule/resume'),
 }

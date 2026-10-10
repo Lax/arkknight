@@ -245,6 +245,10 @@ fn router(state: AppState) -> Router {
             "/api/devices/{name}/screenshot",
             axum::routing::get(api_device_screenshot),
         )
+        .route(
+            "/api/local-events",
+            axum::routing::get(api_local_events_get).put(api_local_events_put),
+        )
         .route("/api/doctor", axum::routing::get(api_doctor))
         .route("/api/ws", axum::routing::get(api_ws))
         .fallback(ui_fallback)
@@ -342,6 +346,7 @@ async fn api_status(State(s): State<AppState>) -> impl IntoResponse {
                 json!({
                     "key": a.key, "display_name": a.display_name, "server": a.server.to_string(),
                     "enabled": a.enabled, "priority": a.schedule.priority,
+                    "game_day_boundary": s.shared.cfg.scheduler.game_day_boundary.clone(),
                     "runner": match a.schedule.runner {
                         arkknight_core::model::RunnerKind::Docker => "docker",
                         arkknight_core::model::RunnerKind::Process => "process",
@@ -1294,6 +1299,73 @@ async fn api_device_screenshot(
     }
 }
 
+/// 本地定时事项 + 调度展示参数（时间轴渲染依据；实时读盘，PUT 即存即生效）。
+async fn api_local_events_get(State(s): State<AppState>) -> impl IntoResponse {
+    match s.wd.load_config() {
+        Ok(cfg) => Json(json!({
+            "game_day_boundary": cfg.scheduler.game_day_boundary,
+            "timezone": cfg.scheduler.timezone,
+            "default_slice": cfg.scheduler.default_slice.to_string(),
+            "local_events": cfg.local_events,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LocalEventBody {
+    name: String,
+    start: String,
+    end: String,
+}
+
+/// 整体替换本地事项列表（[] 清空）。写 arkknight.toml——调度器不消费此表，
+/// 无需重启；其余字段原样保留。
+async fn api_local_events_put(
+    State(s): State<AppState>,
+    Json(body): Json<Vec<LocalEventBody>>,
+) -> impl IntoResponse {
+    let events: Vec<arkknight_core::config::LocalEvent> = body
+        .into_iter()
+        .map(|b| arkknight_core::config::LocalEvent {
+            name: b.name,
+            start: b.start,
+            end: b.end,
+        })
+        .collect();
+    let mut cfg = match s.wd.load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    cfg.local_events = events;
+    if let Err(e) = cfg.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": e.to_string(), "hint": "HH:MM 严格五字符；须 start < end（不支持跨午夜）"})),
+        )
+            .into_response();
+    }
+    match s.wd.save_config(&cfg) {
+        Ok(()) => Json(json!({"ok": true, "local_events": cfg.local_events})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 async fn api_doctor(State(s): State<AppState>) -> impl IntoResponse {
     let report = arkknight_core::doctor::run(&s.wd, &Default::default()).await;
     Json(serde_json::to_value(&report).unwrap_or(json!({"checks": []})))
@@ -1991,6 +2063,53 @@ mod tests {
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
         assert!(!wd.maa_task_path("main", "weekly").unwrap().exists());
+    }
+
+    /// 本地定时事项：PUT 落盘 arkknight.toml → GET 读回；非法项 400。
+    #[tokio::test]
+    async fn local_events_crud() {
+        let (state, wd, _store, _tmp) = content_test_state();
+        let body = json!([{"name": "网络闪断", "start": "18:00", "end": "18:05"}]);
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::put("/api/local-events")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let cfg = wd.load_config().unwrap();
+        assert_eq!(cfg.local_events.len(), 1);
+        assert_eq!(cfg.local_events[0].name, "网络闪断");
+
+        let res = router(state.clone())
+            .oneshot(
+                HttpRequest::get("/api/local-events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(v["game_day_boundary"], "04:00");
+        assert_eq!(v["local_events"][0]["start"], "18:00");
+
+        // 非法：start >= end
+        let bad = json!([{"name": "x", "start": "19:00", "end": "18:00"}]);
+        let res = router(state)
+            .oneshot(
+                HttpRequest::put("/api/local-events")
+                    .header("content-type", "application/json")
+                    .body(Body::from(bad.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 
     /// 不存在的账号/设备：报错应列出当前已注册项，便于用户自查拼写。
